@@ -44,6 +44,10 @@ This is your team's repository for the four-week physical AI hackathon run by Ro
 - A link to this repository
 - References and credits for data, models, code and tools
 
+## Mentee tutorials
+
+Step-by-step Jupyter notebooks (Git, Python, `uv`, and extending the FANUC Isaac/Cosmos pipeline) live in [`tutorials/notebooks/`](tutorials/notebooks/README.md). Start there if you are new to the repo or the Brev GPU workflow.
+
 ## Working in this repository
 
 ```bash
