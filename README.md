@@ -48,6 +48,8 @@ This is your team's repository for the four-week physical AI hackathon run by Ro
 
 Step-by-step Jupyter notebooks (Git, Python, `uv`, and extending the FANUC Isaac/Cosmos pipeline) live in [`tutorials/notebooks/`](tutorials/notebooks/README.md). Start there if you are new to the repo or the Brev GPU workflow.
 
+On a GPU instance, after exporting `ISAAC`, `COSMOS`, and model paths (see [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md)): `bash scripts/setup-dev.sh`, then `bash scripts/preflight.sh`.
+
 ## Working in this repository
 
 ```bash

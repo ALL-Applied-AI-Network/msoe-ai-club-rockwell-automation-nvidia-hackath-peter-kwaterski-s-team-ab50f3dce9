@@ -10,26 +10,37 @@ Hands-on Jupyter notebooks for the Rockwell + NVIDIA hackathon team. Work throug
 | [01_python_fundamentals.ipynb](01_python_fundamentals.ipynb) | 60–90 min | Python basics using data from the FANUC starter |
 | [02_uv_and_environments.ipynb](02_uv_and_environments.ipynb) | 45–60 min | `uv` for the tutorial kernel; map host vs Isaac vs Cosmos interpreters |
 | [03_extend_the_simulation.ipynb](03_extend_the_simulation.ipynb) | 3–5 hours | Live pipeline: scene objects, planning, Cosmos, in-context learning, full run |
+| [04_evaluate_perception.ipynb](04_evaluate_perception.ipynb) | 90–120 min | Score perception and execution, visualize errors, compare runs |
+| [05_debug_coordinate_frames.ipynb](05_debug_coordinate_frames.ipynb) | 90–120 min | Pixel, camera, world and robot frames; projection and debugging |
+| [06_prompt_and_icl_experiments.ipynb](06_prompt_and_icl_experiments.ipynb) | 2–3 hours | Controlled Cosmos prompt and image-example experiments |
+| [07_synthetic_data_and_domain_randomization.ipynb](07_synthetic_data_and_domain_randomization.ipynb) | 2–4 hours | Reproducible Isaac scene variants and held-out robustness tests |
+| [08_failure_analysis_and_recovery.ipynb](08_failure_analysis_and_recovery.ipynb) | 90–150 min | Diagnose the first failed stage and choose safe recovery behavior |
+| [09_reproducible_experiments.ipynb](09_reproducible_experiments.ipynb) | 90–120 min + run | Hypotheses, run manifests, hashes and controlled comparisons |
+| [10_sim_to_real_readiness.ipynb](10_sim_to_real_readiness.ipynb) | 2 hours + cell session | Evidence review and staged, supervised physical validation |
 
-Notebooks **00–02** run entirely in this folder’s Python environment. **03** requires the live stack documented in [`fanuc_er4ia_sim/SETUP.md`](../../fanuc_er4ia_sim/SETUP.md).
+Notebooks **00–02** run entirely in this folder’s Python environment. **03–10** use saved run artifacts and progressively add the live Isaac/Cosmos stack documented in [`fanuc_er4ia_sim/SETUP.md`](../../fanuc_er4ia_sim/SETUP.md). Live cells are opt-in when they are expensive or create new runs.
+
+For beginners, work in order and pair with a teammate for notebooks 06–10. If time is limited, complete **04, 05 and 08** after the original sequence; they teach the core loop of measuring, diagnosing and recovering.
 
 ## Setup (once per machine)
 
-From this directory:
+From the **repository root** (recommended on Brev):
 
 ```bash
-# Install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
-uv sync
-uv run python -m ipykernel install --user --name rockwell-tutorials --display-name "Rockwell tutorials"
+bash scripts/setup-dev.sh
 ```
+
+That runs `fanuc_er4ia_sim/bootstrap.sh` (host venv, textures, 33 tests) and `uv sync` for this notebook folder, and registers the **Rockwell tutorials** Jupyter kernel. Use `bash scripts/setup-dev.sh --no-kernel` if you only want the virtual environments.
+
+Manual equivalent: install [uv](https://docs.astral.sh/uv/getting-started/installation/), then from this directory run `uv sync` and `uv run python -m ipykernel install --user --name rockwell-tutorials --display-name "Rockwell tutorials"`.
 
 Open Jupyter Lab or VS Code and select the **Rockwell tutorials** kernel.
 
-Host simulation code (planning, tests) still uses `fanuc_er4ia_sim/.venv` from `./bootstrap.sh`. Do not replace Isaac or Cosmos with this kernel.
+Host simulation code (planning, tests) still uses `fanuc_er4ia_sim/.venv`. Do not replace Isaac or Cosmos with this kernel.
 
 ## NVIDIA Brev workflow
 
-1. **Start** your Brev instance when you begin work. Open a terminal and clone or pull this repository.
+1. **Start** your Brev instance when you begin work. Clone or pull this repository.
 2. **Configure paths** on the instance (adjust to your layout):
 
    ```bash
@@ -40,18 +51,13 @@ Host simulation code (planning, tests) still uses `fanuc_er4ia_sim/.venv` from `
    # Optional: export FANUC_ROBOT_USD=... if the ER-4iA asset is not in Isaac’s cache
    ```
 
-3. **Bootstrap the host venv** (from `fanuc_er4ia_sim/`):
+3. **Set up repo-owned environments:** `bash scripts/setup-dev.sh`
+
+4. **Preflight** (after exports above):
 
    ```bash
-   cd fanuc_er4ia_sim && ./bootstrap.sh
-   ```
-
-4. **Run Cosmos smoke checks** (from `SETUP.md`):
-
-   ```bash
-   "$COSMOS" -c 'import torch; print("CUDA:", torch.cuda.is_available())'
-   cd fanuc_er4ia_sim
-   "$COSMOS" -c 'from perceive import load_model; load_model(); print("Model ready")'
+   bash scripts/preflight.sh
+   bash scripts/preflight.sh --load-model   # optional: verify Cosmos weights load
    ```
 
 5. **Stop or pause** the Brev instance when you are done. Brev credits accrue while the instance runs.
