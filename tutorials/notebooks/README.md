@@ -17,10 +17,13 @@ Hands-on Jupyter notebooks for the Rockwell + NVIDIA hackathon team. Work throug
 | [08_failure_analysis_and_recovery.ipynb](08_failure_analysis_and_recovery.ipynb) | 90–150 min | Diagnose the first failed stage and choose safe recovery behavior |
 | [09_reproducible_experiments.ipynb](09_reproducible_experiments.ipynb) | 90–120 min + run | Hypotheses, run manifests, hashes and controlled comparisons |
 | [10_sim_to_real_readiness.ipynb](10_sim_to_real_readiness.ipynb) | 2 hours + cell session | Evidence review and staged, supervised physical validation |
+| [11_adding_cad_objects_to_the_sim.ipynb](11_adding_cad_objects_to_the_sim.ipynb) | 2–3 hours (Isaac + CAD export) | CAD → USD, colliders, `scene_config` / `cell.py`, rebuild and capture |
 
 Notebooks **00–02** run entirely in this folder’s Python environment. **03–10** use saved run artifacts and progressively add the live Isaac/Cosmos stack documented in [`fanuc_er4ia_sim/SETUP.md`](../../fanuc_er4ia_sim/SETUP.md). Live cells are opt-in when they are expensive or create new runs.
 
 For beginners, work in order and pair with a teammate for notebooks 06–10. If time is limited, complete **04, 05 and 08** after the original sequence; they teach the core loop of measuring, diagnosing and recovering.
+
+Use **11** when you need new meshes from CAD (distractors, fixtures, or future task objects). It complements **03** (pipeline and existing layout), not replaces it.
 
 ## Setup (once per machine)
 
