@@ -1,0 +1,290 @@
+"""Standalone MVC view mockup.
+Still need to import in the digital twin data.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import queue
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk
+from typing import Optional, Protocol
+
+
+NOT_MEASURED = "Not measured"
+COUNT_FIELDS = ("detected", "eligible", "attempted", "sorted", "skipped", "failed")
+
+
+@dataclass
+class Alert:
+    id: str
+    object_id: str
+    category: str
+    outcome: str
+    reason: str
+
+
+@dataclass
+class ViewStatus:
+    """Internal presentation shape; adapt real telemetry into this shape later."""
+
+    run_id: str
+    status: str
+    stage: str
+    source: str
+    simulated: bool
+    generated_at: Optional[datetime] = None
+    counts: dict = field(default_factory=dict)
+    metrics: dict = field(default_factory=dict)
+    alerts: list = field(default_factory=list)
+
+
+
+class StatusSource(Protocol):
+    """Replaceable, read-only adapter. Called only on the worker thread.
+
+    Future network implementations must bound their I/O timeouts and implement
+    certificate verification/mTLS in the adapter, without touching widget code.
+    """
+
+    def read_status(self) -> ViewStatus: ...
+
+
+
+class LocalStatusFileSource:
+    def __init__(self, path):
+        self.path = path
+
+    def read_status(self):
+        # TODO: Read sorting_status.json with json.load on this worker thread.
+        # TODO: Validate the actual schema supplied by the model/controller team.
+        # TODO: Map its fields into ViewStatus; retain missing values as None.
+        # TODO: Map only VERIFIED placements into 'sorted', never detections.
+        # TODO: Preserve alert IDs and exact reasons, metric units/denominators,
+        #       producer timestamp, run ID, and simulation provenance.
+        # TODO: Handle partial writes; preferably have the exporter replace files
+        #       atomically. Raise an informative error for invalid snapshots.
+        # A local file only reflects local contents, not a connection to Brev.
+        raise NotImplementedError("Local-file mapping awaits the team's status contract.")
+
+        class DemoSource:
+            """Fixed fictional snapshot; no inference, physics, or hardware validation."""
+
+    def __init__(self):
+        self.created = datetime.now(timezone.utc)
+
+    def read_status(self):
+        return ViewStatus(
+            run_id="SIMULATED-RUN-001",
+            status="Example run finished with skips",
+            stage="Placement verification (example)",
+            source="Built-in simulated snapshot — no Brev connection",
+            simulated=True,
+            generated_at=self.created,
+            counts={
+                "Cubes": dict(zip(COUNT_FIELDS, (6, 6, 6, 5, 0, 1))),
+                "Caps": dict(zip(COUNT_FIELDS, (2, 0, 0, 0, 2, 0))),
+                "Tubes": dict(zip(COUNT_FIELDS, (2, 0, 0, 0, 2, 0))),
+            },
+            metrics={
+                "Verified / attempted": "5 / 6 (83.3%) — simulated",
+                "Cycle time": None,
+                "Placement error": None,
+            },
+            alerts=[
+                Alert("demo-cube-06", "cube-06", "Cubes", "Failed",
+                      "Simulated example: placement verification failed; actual reason comes from the controller."),
+                *[Alert(f"demo-{kind}-{i}", f"{kind}-{i}", category, "Skipped",
+                        "Simulated alert: supplied object cannot be grasped by the current modeled gripper.")
+                  for kind, category in (("cap", "Caps"), ("tube", "Tubes"))
+                  for i in (1, 2)],
+            ],
+        )
+def display(value):
+    return NOT_MEASURED if value is None else str(value)
+
+
+class SortingView:
+    def __init__(self, root, source: StatusSource):
+        self.root = root
+        self.source = source
+        self.events = queue.Queue(maxsize=1)
+        self.stop = threading.Event()
+        self.last_received = None
+        self.snapshot = None
+        self.error = None
+        self.alert_rows = {}  # Scoped to the run; repeated IDs update existing rows.
+
+        self.run_id = None
+        root.title("Robotic sorting | Tkinter view preview")
+        root.geometry("1120x760")
+        root.minsize(900, 650)
+        root.configure(bg="#edf2f7")
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure("TFrame", background="#edf2f7")
+        style.configure("TLabel", background="#edf2f7", font=("Segoe UI", 10))
+        style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"))
+        style.configure("Section.TLabel", font=("Segoe UI", 12, "bold"))
+        style.configure("Banner.TLabel", background="#fff0c2", foreground="#604000", padding=12)
+
+        style.configure("Treeview", rowheight=32, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+
+        frame = ttk.Frame(root, padding=22)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Robotic sorting", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Read-only MVC view • desktop telemetry preview").pack(anchor="w", pady=(0, 12))
+
+        self.banner = ttk.Label(frame, style="Banner.TLabel")
+        self.banner.pack(fill="x")
+        self.run_text = tk.StringVar(value="Waiting for a snapshot…")
+        ttk.Label(frame, textvariable=self.run_text, justify="left").pack(anchor="w", pady=12)
+        self.fresh_text = tk.StringVar(value="No source read yet")
+        ttk.Label(frame, textvariable=self.fresh_text).pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(frame, text="Inventory and verified outcomes", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Detected objects are separate from verified sorted objects.").pack(anchor="w",
+                                                                                                  pady=(2, 8))
+        self.counts = ttk.Treeview(frame, columns=("category",) + COUNT_FIELDS, show="headings", height=3,
+                                   selectmode="none")
+        headings = ("Category", "Detected", "Eligible", "Attempted", "Verified sorted", "Skipped", "Failed")
+
+        for key, title in zip(self.counts["columns"], headings):
+            self.counts.heading(key, text=title)
+            self.counts.column(key, width=135, anchor="center")
+        for category in ("Cubes", "Caps", "Tubes"):
+            self.counts.insert("", "end", iid=category, values=(category,) + (NOT_MEASURED,) * 6)
+        self.counts.pack(fill="x")
+
+        ttk.Label(frame, text="Available metrics", style="Section.TLabel").pack(anchor="w", pady=(16, 4))
+        self.metric_text = tk.StringVar()
+        ttk.Label(frame, textvariable=self.metric_text).pack(anchor="w")
+        ttk.Label(frame, text="Object alerts",
+
+                  style="Section.TLabel").pack(anchor="w", pady=(16, 6))
+        alert_frame = ttk.Frame(frame)
+        alert_frame.pack(fill="both", expand=True)
+        self.alerts = ttk.Treeview(alert_frame, columns=("object", "category", "outcome", "reason"), show="headings",
+                                   height=5)
+        for key, title, width in (("object", "Object", 100), ("category", "Category", 80),
+                                  ("outcome", "Outcome", 85), ("reason", "Reason (select for full text)", 620)):
+            self.alerts.heading(key, text=title)
+            self.alerts.column(key, width=width, minwidth=60)
+        scroll = ttk.Scrollbar(alert_frame, orient="vertical", command=self.alerts.yview)
+        self.alerts.configure(yscrollcommand=scroll.set)
+        self.alerts.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.detail = tk.StringVar(value="Select an alert to read its full reason.")
+
+        ttk.Label(frame, textvariable=self.detail, wraplength=1000).pack(anchor="w", pady=8)
+        self.alerts.bind("<<TreeviewSelect>>", self.show_alert)
+        ttk.Label(frame, text="Caps and tubes are not physically validated for sorting with the supplied gripper.\n"
+                  "Integration pending: real status mapping, Brev telemetry transport, and certificate-based TLS.",
+                  foreground="#555555").pack(anchor="w", pady=(6, 0))
+
+        # The worker never accesses Tk, including StringVar or root.after.
+        threading.Thread(target=self.poll_source, daemon=True).start()
+        self.timer = root.after(100, self.drain_events)
+        root.protocol("WM_DELETE_WINDOW", self.close)
+
+
+    def poll_source(self):
+        while not self.stop.is_set():
+            try:
+                event = (self.source.read_status(), None)
+            except Exception as exc:
+                event = (None, f"{type(exc).__name__}: {exc}")
+            try:
+                self.events.put_nowait(event)
+            except queue.Full:
+                pass
+            self.stop.wait(1.0)
+
+    def drain_events(self):
+        try:
+            status, self.error = self.events.get_nowait()
+            if status is not None:
+                self.last_received = time.monotonic()
+                self.snapshot = status
+                self.render(status)
+        except queue.Empty:
+            pass
+
+            self.update_freshness()
+            self.timer = self.root.after(100, self.drain_events)
+
+        def render(self, status):
+            self.banner.configure(text=("SIMULATED DEMONSTRATION — illustrative counts and alerts; no live telemetry"
+                                        if status.simulated else "STATUS SNAPSHOT — " + status.source))
+            self.run_text.set(
+                f"Run: {status.run_id}\nStatus: {status.status}\nPipeline stage: {status.stage}\nSource: {status.source}")
+            for category in ("Cubes", "Caps", "Tubes"):
+                counts = status.counts.get(category, {})
+                self.counts.item(category, values=(category,) + tuple(display(counts.get(k)) for k in COUNT_FIELDS))
+            self.metric_text.set(
+                "\n".join(f"{name}: {display(value)}" for name, value in status.metrics.items()) or NOT_MEASURED)
+
+            if status.run_id != self.run_id:
+                for row in self.alerts.get_children():
+                    self.alerts.delete(row)
+                self.alert_rows.clear()
+                self.detail.set("Select an alert to read its full reason.")
+                self.run_id = status.run_id
+            for alert in status.alerts:
+                values = (alert.object_id, alert.category, alert.outcome, alert.reason)
+                if alert.id in self.alert_rows:
+                    self.alerts.item(self.alert_rows[alert.id], values=values)
+                else:
+                    self.alert_rows[alert.id] = self.alerts.insert("", "end", values=values)
+            # TODO: Match the real contract's alert lifecycle (history vs active set).
+
+    def update_freshness(self):
+        if self.error:
+            self.fresh_text.set("Source error — retaining last snapshot: " + self.error)
+            return
+        if self.last_received is None:
+            return
+        read_age = time.monotonic() - self.last_received
+        stamp = self.snapshot.generated_at
+        age = None if stamp is None else (datetime.now(timezone.utc) - stamp).total_seconds()
+        age_text = "producer time unavailable" if age is None else f"snapshot age {age:.0f}s"
+
+        # Demo is intentionally fixed. Re-reading it does not refresh producer time.
+        state = "SIMULATED, fixed snapshot" if self.snapshot.simulated else "local/source snapshot only"
+        if age is not None and age > 10:
+            state += " • STALE (>10s preview threshold)"
+        if read_age > 3:
+            state += " • source read delayed"
+        self.fresh_text.set(f"Freshness: {state} | {age_text} | last successful read {read_age:.0f}s ago")
+        # TODO: Set freshness thresholds from the agreed producer cadence.
+
+
+
+    def show_alert(self, _event=None):
+        selected = self.alerts.selection()
+        if selected:
+            values = self.alerts.item(selected[0], "values")
+            self.detail.set(f"{values[0]} — {values[2]}: {values[3]}")
+
+    def close(self):
+        self.stop.set()
+        self.root.after_cancel(self.timer)
+        self.root.destroy()
+
+
+class DemoSource:
+    pass
+
+
+def main():
+    # TODO: Inject LocalStatusFileSource(path) after implementing its real mapping.
+    # Later, inject a TLS telemetry adapter here. The view stays read-only.
+    root = tk.Tk()
+    SortingView(root, DemoSource())
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
