@@ -3,8 +3,24 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
+bootstrap_python() {
+    if [ -n "${HOST_PYTHON_BOOTSTRAP:-}" ]; then
+        echo "$HOST_PYTHON_BOOTSTRAP"
+        return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return
+    fi
+    if [ -n "${ISAAC:-}" ] && [ -x "${ISAAC}/kit/python/bin/python3" ]; then
+        echo "${ISAAC}/kit/python/bin/python3"
+        return
+    fi
+    echo "python3 not found. Install Python 3.12+, or export ISAAC, or set HOST_PYTHON_BOOTSTRAP." >&2
+    exit 127
+}
 if [ ! -x .venv/bin/python ]; then
-    python3 -m venv .venv
+    "$(bootstrap_python)" -m venv .venv
 fi
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python make_textures.py

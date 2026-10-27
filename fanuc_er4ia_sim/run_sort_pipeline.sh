@@ -2,12 +2,26 @@
 # Capture -> Cosmos -> plan -> physical execution -> review videos.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
+if [ -f "$REPO/scripts/env.local.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$REPO/scripts/env.local.sh"
+fi
+if [ -z "${ISAAC:-}" ] || [ ! -x "${ISAAC}/python.sh" ]; then
+    for candidate in /workspace/isaaclab/_isaac_sim /isaacsim; do
+        if [ -x "$candidate/python.sh" ]; then
+            ISAAC="$candidate"
+            break
+        fi
+    done
+fi
 ISAAC="${ISAAC:-/isaacsim}"
-: "${COSMOS:?Set COSMOS to the Python interpreter in your Cosmos environment}"
+: "${COSMOS:?Set COSMOS (e.g. source $REPO/scripts/env.local.sh)}"
 HOST_PYTHON="${HOST_PYTHON:-$HERE/.venv/bin/python}"
 for executable in "$ISAAC/python.sh" "$COSMOS" "$HOST_PYTHON"; do
     if [ ! -x "$executable" ]; then
         echo "Python launcher missing or not executable: $executable" >&2
+        echo "Hint: export ISAAC and COSMOS, or: source $REPO/scripts/env.local.sh" >&2
         exit 1
     fi
 done
