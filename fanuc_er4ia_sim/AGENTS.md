@@ -12,7 +12,7 @@ User instructions take precedence over this file.
 1. Inspect the current directory, host Python version, GPU availability and any
    existing Isaac/Cosmos installations. Use the participant's actual paths.
 2. Run `./bootstrap.sh` to prepare the host environment, generate materials and
-   run the 33 host tests. Reuse an existing working `.venv`.
+   run the host test suite. Reuse an existing working `.venv`.
 3. Configure `ISAAC` and `COSMOS`. Set `COSMOS3_NANO_PATH` to a real model snapshot.
    Set `COSMOS3_ROOT` only if the framework package is not already installed.
 4. Run the dependency/model checks in `SETUP.md`. Do not execute placeholder
@@ -42,7 +42,7 @@ Do not copy a development machine's absolute paths into code.
 Run the host tests after code changes:
 
 ```bash
-.venv/bin/python -m unittest test_sort_planning test_cube_perception test_cube_pose test_runtime_config test_recovery_policy
+.venv/bin/python -m unittest test_sort_planning test_cube_perception test_cube_pose test_runtime_config test_recovery_policy test_recovery_runner test_fake_isaac
 ```
 
 For geometry, physics, camera or motion changes, also capture a fresh scene and

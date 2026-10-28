@@ -8,8 +8,8 @@ project:
 - [Model notes](MODEL_NOTES.md): geometry, perception, and simulation
   assumptions.
 - [Recovery policy](RECOVERY_POLICY.md): current failure-classification and
-  retry-proposal prototype, its interfaces, limitations, and integration
-  considerations.
+  separate-run simulation replay workflow, its interfaces, limitations, and
+  integration considerations.
 
 When adding a project capability, document its purpose, affected interfaces,
 validation, and known limitations in a focused page here, then link it from

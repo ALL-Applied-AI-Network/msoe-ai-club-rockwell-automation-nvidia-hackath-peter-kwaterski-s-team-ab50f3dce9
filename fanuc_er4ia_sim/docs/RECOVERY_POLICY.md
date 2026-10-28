@@ -1,133 +1,182 @@
-# Recovery policy prototype
+# Recovery policy and simulation replay
 
-## Purpose and status
+## Status and scope
 
-`recovery_policy.py` is an isolated, pure-Python prototype for the recovery
-workstream. It classifies failures from execution-event dictionaries and
-proposes a bounded retry-plan candidate for a failed cube pickup.
+The recovery policy classifies completed execution attempts and can propose
+bounded cube-pick plan changes. `run_with_recovery.sh` can execute those plans
+in **separate Isaac Sim processes and fresh run directories**.
 
-This is **not live recovery**. It does not read run files, access Isaac Sim,
-observe the scene, validate trajectories, or command motion. The execution
-pipeline and GUI do not call it. A retry proposal must not be sent directly to
-the motion executor.
+This is **not live recovery**. A failed attempt is not corrected in the running
+simulation. Every replay reconstructs the scene from that run's saved
+`scene_state.json`, which is the captured initial state. The workflow does not
+command or support a physical robot and must not be presented as hardware or
+in-session recovery.
 
-## Project context
+The tool only automatically retries a classified missed cube grasp. Wrong
+object, unreachable motion, placement/support failure, collision, detected
+drop, uncertain state, and execution crash stop for review.
 
-The pipeline in `run_sort_pipeline.sh` runs capture, perception, planning,
-Isaac execution, and video encoding as separate stages. `sort_scene.py`
-performs the planned motions and records per-pick events in
-`execution_events.json`. The recovery policy is deliberately separate so its
-classification and decision behavior can be tested without Isaac, Cosmos, or
-changes to the GUI.
+## Architecture and data flow
 
-The intended data flow for this prototype is:
+The normal pipeline creates a run containing capture/perception/planning
+artifacts, executes `sort_scene.py`, and writes `execution_events.json` and
+`execution_report.json`. Recovery is started separately:
 
-1. A caller supplies the event list written by the executor and the associated
-   plan.
-2. `classify_failure(events)` identifies the first event with a recognized
-   failure indicator.
-3. `propose_recovery_action(plan, failure, ...)` returns either a stop-for-review
-   decision or a copied candidate plan.
-4. A future integration layer would need to obtain fresh observations, validate
-   the candidate motion, execute it in the current simulation, and verify the
-   outcome. Those steps are not implemented here.
+1. `run_with_recovery.sh RUN_DIR` invokes the host Python policy.
+2. If the run has no execution report, it first invokes Isaac with
+   `sort_scene.py --physics-only`.
+3. `classify_failure(events, plan, report)` identifies the first event failure
+   or detects an incomplete/missing report.
+4. `decide(...)` chooses a bounded action for a missed grasp. If the action
+   changes the plan, the wrapper copies the required run inputs into a new
+   sibling run directory (`RUN_DIR_retry1`, then `RUN_DIR_retry2`), writes the
+   candidate plan, and invokes a fresh Isaac process.
+5. Each attempt receives a `recovery_decision.json`; the base run receives a
+   `recovery_log.json` describing the attempt sequence and final outcome.
 
-## Functions and interfaces
+Retry directories are never overwritten. Start from a clean base run whose
+retry directories do not already exist. Review `sort.log` and the JSON reports
+for every attempt.
 
-### `classify_failure(events)`
+## Failure classification
 
-Accepts a list of dictionaries shaped like execution events. Returns `None`
-when no failure indicator is present, or a dictionary with:
+`classify_event(event)` returns one failure type or `None` for a successful
+event. `classify_failure(events, plan=None, report=None)` returns the first
+failure with stage, event index, detection ID, and stack level when available.
+When plan and report context are supplied, it also returns:
 
-- `stage`: currently `execution`
-- `event_index`: index into both the event list and, by assumption, the plan's
-  `picks` list
-- `failure_type`: one recognized failure classification
-- `detection_id`: included when present in the event
+- `execution_crash` if the report is missing or fewer events than planned picks
+  were recorded.
+- `incomplete` when events do not show an explicit failure but the report does
+  not confirm completion.
+- `none` only when the report says complete and the expected events exist.
 
-Failure indicators, in precedence order, are:
+The classifier recognizes:
 
-1. `collision_detected: true`
-2. `drop_detected: true`
-3. `state_uncertain: true`
-4. `pickup_verified: false`
-5. `placement_verified: false`
-6. `stack_support_verified: false`
-7. `trajectory_ik_failures > 0`
+| Failure | Meaning | Automatic retry |
+|---|---|---|
+| `untracked_target` | No tracked target was associated with the attempted pick | No |
+| `ik_failure` | Recorded trajectory IK failures | No |
+| `missed_grasp` | Pickup not verified and no object was lifted | Yes, bounded |
+| `wrong_object` | Multiple or unintended objects were lifted | No |
+| `placement_failed` | Pickup succeeded but placement did not verify | No |
+| `support_failed` | Stack support validation failed | No |
+| `collision_detected`, `dropped_object`, `state_uncertain` | Explicit event flags from an execution adapter | No |
+| `event_plan_mismatch` | Event detection ID differs from the planned pick at that index | No |
+| `execution_crash` | Missing report or fewer events than planned picks | No |
+| `incomplete` | No classified event failure, but task completion is not confirmed | No |
 
-The current `sort_scene.py` event schema provides pickup, placement, stack
-support, and IK failure information. It does **not** currently produce the
-collision, drop, or uncertain-state flags. Those classifications are available
-only for callers that provide those explicit fields; this module does not
-detect the conditions itself.
+The current `sort_scene.py` reports pickup, lift, placement, support, and IK
+evidence. It does not emit collision, drop, or uncertain-state flags; the policy
+can classify those only if an event supplies them. The current policy does not
+detect those conditions itself.
 
-The event-index-to-pick-index relationship is an assumption, not a validated
-identifier mapping. A future caller must ensure events correspond positionally
-to the plan or replace this mapping with stable pick identifiers.
+Simulator-tracked object data in execution events is used to classify/report
+what happened in the simulation. It must not be used to adjust grasp commands;
+retry pose proposals use the plan and, for image fitting, the saved camera image.
 
-### `propose_recovery_action(plan, failure, retry_number=1, max_retries=2)`
+## Retry strategy
 
-For `pickup_failed` on a planned cube, returns a deep-copied candidate plan with
-the selected pick's world-X coordinate offset:
+Only `missed_grasp` is retryable. The default hard limit remains **two retries
+per base run**. Actions are attempted in this order:
 
-- Retry 1: `+0.002` metres
-- Retry 2: `-0.002` metres
+1. **`remeasure`** — refit cube pose from the run's saved `world_camera.png` and
+   `camera.json`, using image geometry and the existing minimum pose-fit gate.
+   If the saved image is unavailable or the fit is inadequate, skip this rung.
+   This is a re-analysis of a frozen image, not a fresh post-failure
+   observation.
+2. **`flip_spread`** — rotate the grasp direction by 90 degrees and update the
+   corresponding yaw/spread fields.
+3. **`nudge`** — move the grasp target 2 mm along the planned jaw direction.
 
-The policy hard-caps `max_retries` at two. Retry numbers are one-based. Returned
-candidate actions include `executed: false`,
-`requires_fresh_observation: true`, and
-`requires_motion_validation: true`.
+Rungs that cannot produce a plan are skipped without consuming a retry. Each
+actual replay consumes one retry. With the two-retry limit, a normal sequence
+may use remeasure and flip; if remeasure is skipped, a later replay can use the
+nudge rung. The retry count and rung position are stored in the plan to prevent
+loops.
 
-All other failure types return `stop_and_review`; non-cube picks also stop for
-review. Invalid input shapes and mismatched failure/pick identities raise
-errors rather than silently selecting a different target.
+All policy helpers return copied plans and preserve unmodified picks. Retry
+plans pass the existing `sort_scene.validate_plan` gate before files are
+created. Isaac still validates the plan again before motion. No retry is
+attempted for a different object or unsafe/uncertain failure.
 
-The XY offset is a testable example proposal, **not an approved or safe motion
-target**. It is not collision-checked, does not re-estimate object position,
-and does not verify reachability. Do not execute it until a live integration
-establishes current scene state and validates the whole candidate trajectory.
+## Commands
 
-## Interactions and change impact
-
-Current code interactions:
-
-- Reads no files and writes no files.
-- Imports no simulator, perception, or planning modules.
-- Accepts plain Python dictionaries shaped like the planner and execution
-  output.
-- Returns plain Python dictionaries; it does not mutate the supplied plan.
-- Is tested by `test_recovery_policy.py` and included in the starter-package
-  allowlist in `package_hackathon.py`.
-- Does not change `sort_scene.py`, `plan_sort.py`, `run_sort_pipeline.sh`, or
-  `TkinterView`.
-
-Changes likely to affect this prototype:
-
-- Renaming/removing event fields such as `pickup_verified`,
-  `placement_verified`, `stack_support_verified`, or
-  `trajectory_ik_failures`.
-- Changing the event or pick ordering, because the prototype currently uses
-  `event_index` to select `plan["picks"][event_index]`.
-- Changing the plan's `picks` shape, cube category label, detection IDs, or
-  coordinate representation.
-- Changing units or coordinate frames for plan XY coordinates or retry offsets.
-- Raising the retry limit or changing the offset policy without corresponding
-  tests and safety review.
-
-If future live recovery is added, keep it in a separate execution integration
-until its safety and runtime behavior are validated. It must detect failure
-while the simulation is running, obtain fresh sensor/perception evidence, stop
-on collisions or uncertain state, validate revised trajectories, enforce a
-bounded retry count, and verify recovery before resuming the remaining task.
-The current policy prototype provides none of those live control guarantees.
-
-## Tests
-
-Run the policy tests from `fanuc_er4ia_sim/`:
+From `fanuc_er4ia_sim/` after creating and executing an ordinary pipeline run:
 
 ```bash
-.venv/bin/python -m unittest test_recovery_policy -v
+ISAAC=/path/to/isaacsim
+bash run_with_recovery.sh runs/stack_01
 ```
 
-These are host-side unit tests only; passing them does not validate Isaac
-physics, camera observations, collision handling, or live recovery.
+The run must contain a `sort_plan.json`; if it already has an execution report,
+the wrapper analyzes that result rather than running the baseline again. To
+change the default cap for a test while respecting the hard maximum:
+
+```bash
+MAX_RECOVERY_RETRIES=1 ./run_with_recovery.sh runs/stack_01
+```
+
+Policy and runner tests:
+
+```bash
+.venv/bin/python -m unittest test_recovery_policy test_recovery_runner test_fake_isaac -v
+```
+
+`test_fake_isaac` executes the real `sort_scene.py` and recovery runner against
+a deliberately simplified fake Isaac API (not Isaac physics). To run a manual
+CLI test in WSL, create a synthetic run with a bad grasp and replay it:
+
+```bash
+.venv/bin/python fake_isaac/make_fake_run.py runs/recovery_fault --fault 2:2:0:0
+chmod +x fake_isaac/python.sh
+HOST_PYTHON="$PWD/.venv/bin/python" ISAAC="$PWD/fake_isaac" \
+  bash run_with_recovery.sh runs/recovery_fault
+```
+
+The fake launcher bypasses the real Isaac installation and physics engine. It
+is for checking the plan/replay/execution plumbing only; passing it is not
+evidence that a trajectory is safe or that Isaac/PhysX behaves the same way.
+
+These are host-side tests. They do not prove Isaac physics or sensor
+performance. A completed retry sequence is not evidence of live recovery.
+
+Summarize a run or calculate recovery rate from multiple base-run directories:
+
+```bash
+.venv/bin/python recovery_policy.py --summarize runs/stack_01
+.venv/bin/python recovery_policy.py --rate runs/stack_01 runs/stack_02
+```
+
+The rate counts base runs whose first classified failure was `missed_grasp`,
+then reports the fraction that eventually completed after replay. It excludes
+other first-failure types; it is not a per-pick success rate.
+
+The synthetic-run `--fault` argument is
+`PICK_INDEX:DX_MM:DY_MM:DYAW_DEG`; `PICK_INDEX` is the zero-based position in
+the plan's `picks` list. For example, `2:2:0:0` offsets the third planned grasp
+by 2 mm in X to exercise image-based remeasurement.
+
+## Interfaces and change impact
+
+The policy consumes plain plan/event/report dictionaries, optional decoded
+image/camera objects, and emits candidate plans. The runner reads/writes run
+JSON and launches Isaac; it does not change `sort_scene.py`, `plan_sort.py`,
+`run_sort_pipeline.sh`, or the GUI.
+
+Changes likely to affect recovery include:
+
+- Event fields or semantics such as `tracked_object`, `objects_lifted`,
+  `pickup_verified`, `placement_verified`, `stack_support_verified`, and
+  `trajectory_ik_failures`.
+- Plan/event ordering or detection identifiers used to associate a failed
+  event with `plan["picks"]`.
+- Plan fields, coordinate units/frames, cube orientation, or
+  `sort_scene.validate_plan` gates.
+- Run artifact names or the source-scene reset semantics.
+- Retry limits or rung order.
+
+Keep tests and this document aligned whenever those interfaces change. Live
+recovery would require a distinct execution-loop design with current-state
+sensing, collision/contact detection, validated recovery trajectories, and
+stop behavior; this replay runner does not supply those capabilities.

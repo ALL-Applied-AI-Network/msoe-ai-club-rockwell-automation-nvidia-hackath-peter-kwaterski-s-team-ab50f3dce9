@@ -36,9 +36,11 @@ replaced by a silver material when the optional photo maps are absent.
 | `run_sort_pipeline.sh` | Capture → perceive → plan → execute → encode |
 
 `recovery_policy.py` contains pure, host-testable failure classification and
-bounded cube-pick retry-plan proposals. It is not connected to the execution
-pipeline: proposals are not collision-checked or executed, and the current
-execution events do not report detected drops or collisions.
+bounded cube-pick retry decisions. `run_with_recovery.sh RUN_DIR` can replay an
+existing planned run in fresh Isaac Sim processes and new run directories. This
+is offline replay from the saved initial scene, not live recovery inside the
+current simulation. See [docs/RECOVERY_POLICY.md](docs/RECOVERY_POLICY.md) for
+behavior, limits, and a local fake-Isaac wiring test.
 
 Cosmos identifies cube locations and colours. A calibrated image-geometry
 front end measures yaw; Cosmos receives that measurement and confirms/reports

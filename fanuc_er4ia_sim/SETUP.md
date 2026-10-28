@@ -14,9 +14,10 @@ Prerequisites: Python with `venv` and pip. Host Python 3.12 was used for validat
 ```
 
 This creates/reuses `.venv`, installs `requirements.txt`, generates procedural
-metal/environment maps in `textures/`, and runs 33 tests. No reference images
-are needed. Detailed finger meshes use silver materials without photo maps.
-These generated maps are local outputs, not bundled image files.
+metal/environment maps in `textures/`, and runs the host test suite, including
+the fake-Isaac recovery integration test. No reference images are needed.
+Detailed finger meshes use silver materials without photo maps. These generated
+maps are local outputs, not bundled image files.
 
 ## 2. Isaac Sim
 
@@ -103,6 +104,18 @@ To rerun physical validation without rendering, use a fresh captured/planned run
 ```bash
 "$ISAAC/python.sh" sort_scene.py --run runs/new_planned_run --physics-only
 ```
+
+For bounded recovery replay after the ordinary pipeline, run:
+
+```bash
+ISAAC="$ISAAC" bash run_with_recovery.sh runs/stack_01
+```
+
+This may create `runs/stack_01_retry1` and `runs/stack_01_retry2`. Each retry
+starts a new Isaac process from the saved initial scene; it is not live
+recovery. Review `recovery_log.json`, each `recovery_decision.json`, and
+`sort.log`. See [docs/RECOVERY_POLICY.md](docs/RECOVERY_POLICY.md) for retry
+rules and limitations.
 
 ## Troubleshooting
 
