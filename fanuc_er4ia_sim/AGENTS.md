@@ -42,7 +42,7 @@ Do not copy a development machine's absolute paths into code.
 Run the host tests after code changes:
 
 ```bash
-.venv/bin/python -m unittest test_sort_planning test_cube_perception test_cube_pose test_runtime_config
+.venv/bin/python -m unittest test_sort_planning test_cube_perception test_cube_pose test_runtime_config test_recovery_policy
 ```
 
 For geometry, physics, camera or motion changes, also capture a fresh scene and

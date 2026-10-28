@@ -8,6 +8,7 @@ This minimal starter contains code, instructions, tests and required geometry.
 
 - People: follow [SETUP.md](SETUP.md).
 - Coding agents: read [AGENTS.md](AGENTS.md), then follow the same setup guide.
+- Technical references and change notes: [docs/README.md](docs/README.md).
 - Physical-system calibration: [docs/CALIBRATION_V05.md](docs/CALIBRATION_V05.md).
 - Geometry/perception assumptions: [docs/MODEL_NOTES.md](docs/MODEL_NOTES.md).
 
@@ -33,6 +34,11 @@ replaced by a silver material when the optional photo maps are absent.
 | `sort_scene.py`, `ik.py`, `fk.py` | Physical execution, wrist alignment and success checks |
 | `build_scene.py` | Interactive scene or headless build/render |
 | `run_sort_pipeline.sh` | Capture → perceive → plan → execute → encode |
+
+`recovery_policy.py` contains pure, host-testable failure classification and
+bounded cube-pick retry-plan proposals. It is not connected to the execution
+pipeline: proposals are not collision-checked or executed, and the current
+execution events do not report detected drops or collisions.
 
 Cosmos identifies cube locations and colours. A calibrated image-geometry
 front end measures yaw; Cosmos receives that measurement and confirms/reports

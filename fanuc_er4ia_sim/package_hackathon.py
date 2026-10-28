@@ -20,6 +20,7 @@ CODE = (
     "perceive.py",
     "plan_grasps.py",
     "plan_sort.py",
+    "recovery_policy.py",
     "render_settings.py",
     "scene_config.py",
     "sort_scene.py",
@@ -27,6 +28,7 @@ CODE = (
     "test_cube_pose.py",
     "test_sort_planning.py",
     "test_runtime_config.py",
+    "test_recovery_policy.py",
     "test_support.py",
     "package_hackathon.py",
     "run_sort_pipeline.sh",
@@ -41,6 +43,8 @@ CODE = (
     ".gitignore",
     "docs/MODEL_NOTES.md",
     "docs/CALIBRATION_V05.md",
+    "docs/README.md",
+    "docs/RECOVERY_POLICY.md",
 )
 ASSETS = (
     "assets/gripper/smc_mhzl2_16d2.json",
