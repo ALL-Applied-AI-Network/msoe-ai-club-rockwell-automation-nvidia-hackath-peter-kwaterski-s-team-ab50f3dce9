@@ -38,10 +38,10 @@ def atomic_write_json(path: Path, payload: Any) -> None:
 
 
 class LiveFramePublisher:
-    """Write a throttled JPEG snapshot for remote dashboards."""
+    """Write a throttled PNG snapshot supported by Tkinter PhotoImage."""
 
     def __init__(self, run_dir: Path, *, min_interval_s: float = 0.5):
-        self.path = Path(run_dir) / "live_frame.jpg"
+        self.path = Path(run_dir) / "live_frame.png"
         self.min_interval_s = min_interval_s
         self._last_publish = 0.0
 
@@ -52,12 +52,12 @@ class LiveFramePublisher:
         import cv2
 
         fd, tmp_path = tempfile.mkstemp(
-            dir=self.path.parent, prefix="live_frame.", suffix=".tmp"
+            dir=self.path.parent, prefix=".live_frame.", suffix=".png"
         )
         try:
             os.close(fd)
             if not cv2.imwrite(tmp_path, image_bgr):
-                raise RuntimeError("cv2.imwrite failed for live_frame.jpg")
+                raise RuntimeError("cv2.imwrite failed for live_frame.png")
             os.replace(tmp_path, self.path)
             self._last_publish = now
         except Exception:

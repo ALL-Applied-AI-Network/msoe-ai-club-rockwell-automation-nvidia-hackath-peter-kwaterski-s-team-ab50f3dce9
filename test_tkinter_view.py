@@ -249,12 +249,12 @@ class RemoteStatusSourceTests(unittest.TestCase):
 
         urlopen.side_effect = [
             Response(status_payload),
-            Response(b"\xff\xd8\xff"),
+            Response(b"\x89PNG\r\n\x1a\n"),
         ]
         status = RemoteStatusSource("http://127.0.0.1:8765").read_status()
         self.assertEqual(status.run_id, "remote")
         self.assertEqual(status.controller_phase, "executing")
-        self.assertEqual(status.frame_jpeg, b"\xff\xd8\xff")
+        self.assertEqual(status.frame_image, b"\x89PNG\r\n\x1a\n")
 
 
 class PollingTests(unittest.TestCase):

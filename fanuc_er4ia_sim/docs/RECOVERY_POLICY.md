@@ -21,7 +21,7 @@ calls `live_step_recovery.py` on the host (`HOST_PYTHON` must point at the
 `.venv`). That reuses `decide()` / `apply_action()` from this module. Only
 missed-grasp failures are retried live; placement, support, IK, and uncertain
 states stop the controller. Artifacts: `step_state.json`,
-`live_recovery_decision.json`, and throttled `live_frame.jpg` for the HTTP
+`live_recovery_decision.json`, and throttled `live_frame.png` for the HTTP
 dashboard adapter.
 
 The tool only automatically retries a classified missed cube grasp. Wrong

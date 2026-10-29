@@ -99,7 +99,7 @@ bash run_step_pipeline.sh runs/stack_step_01
 
 This starts a localhost HTTP adapter on port `8765` (override with
 `TWIN_STREAM_PORT`) that serves `/status`, `/step_state`, and `/frame`
-(`live_frame.jpg` from the simulator). From your laptop, forward the port over
+(`live_frame.png` from the simulator). From your laptop, forward the port over
 SSH, then open the dashboard against the tunnel:
 
 ```bash

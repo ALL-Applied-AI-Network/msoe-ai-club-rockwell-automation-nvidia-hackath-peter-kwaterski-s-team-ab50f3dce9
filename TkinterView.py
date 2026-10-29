@@ -51,7 +51,7 @@ class ViewStatus:
     controller_phase: Optional[str] = None
     current_step: Optional[str] = None
     frame_url: Optional[str] = None
-    frame_jpeg: Optional[bytes] = field(default=None, repr=False)
+    frame_image: Optional[bytes] = field(default=None, repr=False)
 
 
 
@@ -291,7 +291,7 @@ class RemoteStatusSource:
             with urllib.request.urlopen(
                 f"{self.base_url}/frame", timeout=self.timeout
             ) as response:
-                status.frame_jpeg = response.read()
+                status.frame_image = response.read()
         except urllib.error.HTTPError as exc:
             if exc.code != 404:
                 raise ConnectionError(f"Remote frame unavailable: {exc}") from exc
@@ -478,14 +478,18 @@ class SortingView:
         if status.current_step:
             step_parts.append(f"Current step: {status.current_step}")
         self.step_text.set(" | ".join(step_parts))
-        if status.frame_jpeg:
+        if status.frame_image:
+            import os
             import tempfile
             import tkinter as tk
 
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
-                handle.write(status.frame_jpeg)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+                handle.write(status.frame_image)
                 path = handle.name
-            photo = tk.PhotoImage(file=path)
+            try:
+                photo = tk.PhotoImage(file=path)
+            finally:
+                os.unlink(path)
             self._photo = photo
             self.live_frame.configure(image=photo)
         else:

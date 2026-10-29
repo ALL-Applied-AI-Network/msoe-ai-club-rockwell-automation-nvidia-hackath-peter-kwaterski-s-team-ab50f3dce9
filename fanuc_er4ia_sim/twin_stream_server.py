@@ -61,12 +61,12 @@ class TwinStreamHandler(BaseHTTPRequestHandler):
             self._send_json(state)
             return
         if path == "/frame":
-            frame_path = self.run_dir / "live_frame.jpg"
+            frame_path = self.run_dir / "live_frame.png"
             if not frame_path.is_file():
                 self.send_response(404)
                 self.end_headers()
                 return
-            self._send_bytes(frame_path.read_bytes(), "image/jpeg")
+            self._send_bytes(frame_path.read_bytes(), "image/png")
             return
         self.send_response(404)
         self.end_headers()
