@@ -7,8 +7,21 @@ FRAMEWORK="${COSMOS3_FRAMEWORK:-/workspace/cosmos-framework}"
 MODEL="${COSMOS3_NANO_PATH:-/workspace/models/Cosmos3-Nano}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+bootstrap_python() {
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return
+    fi
+    if [ -n "${ISAAC:-}" ] && [ -x "${ISAAC}/kit/python/bin/python3" ]; then
+        echo "${ISAAC}/kit/python/bin/python3"
+        return
+    fi
+    echo "python3 not found; export ISAAC before running setup-cosmos-venv.sh" >&2
+    exit 127
+}
+
 if [ ! -d "$VENV" ]; then
-    python3 -m venv "$VENV"
+    "$(bootstrap_python)" -m venv "$VENV"
 fi
 
 "$VENV/bin/pip" install -U pip

@@ -108,6 +108,32 @@ class DigitalTwinSourceTests(unittest.TestCase):
         self.assertEqual(status.counts["Cubes"]["failed"], 1)
         self.assertIsNone(status.counts["Cubes"]["detected"])
 
+    def test_failed_support_is_not_counted_as_sorted(self):
+        self.write("execution_events.json", [self.event(0, supported=False)])
+        status = self.source.read_status()
+        self.assertEqual(status.counts["Cubes"]["sorted"], 0)
+        self.assertEqual(status.counts["Cubes"]["failed"], 1)
+        self.assertEqual(status.metrics["Verified / reported attempts"], "0 / 1 (0.0%)")
+
+    def test_failed_pose_is_not_counted_as_sorted(self):
+        event = dict(self.event(0), placement_pose_verified=False)
+        self.write("execution_events.json", [event])
+        status = self.source.read_status()
+        self.assertEqual(status.counts["Cubes"]["sorted"], 0)
+        self.assertIn("placement_pose_verified=false", status.alerts[0].reason)
+
+    def test_success_report_must_cover_all_planned_picks(self):
+        self.plan()
+        self.write("execution_report.json", dict(picks=[self.event(0)], task_complete=True))
+        with self.assertRaisesRegex(ValueError, "task_complete conflicts"):
+            self.source.read_status()
+
+    def test_report_totals_must_match_pick_results(self):
+        self.write("execution_report.json", dict(picks=[self.event(0)], task_complete=True,
+                   verified_pickups=6, verified_placements=6))
+        with self.assertRaisesRegex(ValueError, "verified_pickups conflicts"):
+            self.source.read_status()
+
     def test_incomplete_inventory_is_blocked_instead_of_completed(self):
         obj = dict(detection_id=0, category="cube", eligible=False, skip_reason="incomplete_cube_colour_set")
         self.write("sort_plan.json", dict(observations=[obj], picks=[], skipped=[obj]))

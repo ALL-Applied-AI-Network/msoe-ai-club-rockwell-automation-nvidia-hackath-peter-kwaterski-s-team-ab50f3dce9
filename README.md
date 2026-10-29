@@ -50,7 +50,14 @@ Step-by-step Jupyter notebooks (Git, Python, `uv`, and extending the FANUC Isaac
 
 **Team roadmap, metrics, and environment checklist:** [`docs/TEAM_MENTEE_GUIDE.md`](docs/TEAM_MENTEE_GUIDE.md). Copy [`scripts/env.example.sh`](scripts/env.example.sh) to `env.local.sh`, set paths, and `source` it each session.
 
-On a GPU instance, after exporting `ISAAC`, `COSMOS`, and model paths (see [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md)): `bash scripts/setup-dev.sh`, then `bash scripts/preflight.sh`.
+**New Brev instance (Isaac already installed):** run once from the repo root:
+
+```bash
+bash scripts/setup-brev.sh              # use existing model weights on disk
+bash scripts/setup-brev.sh --download-model --verify-model   # first time / fresh disk
+```
+
+Then each session: `source scripts/env.local.sh`. Manual steps: [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md), `bash scripts/setup-dev.sh`, `bash scripts/preflight.sh`.
 
 ## Digital twin desktop dashboard
 

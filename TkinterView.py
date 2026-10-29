@@ -14,14 +14,13 @@ from pathlib import Path
 import queue
 import threading
 import time
-import tkinter as tk
-from tkinter import ttk
 from typing import Optional, Protocol
 
 
 NOT_MEASURED = "Not measured"
 COUNT_FIELDS = ("detected", "eligible", "attempted", "sorted", "skipped", "failed")
 CATEGORIES = {"cube": "Cubes", "cap": "Caps", "vial": "Tubes"}
+EXECUTION_CHECKS = ("pickup_verified", "placement_verified", "placement_pose_verified", "stack_support_verified")
 DEFAULT_RUNS_DIR = Path(__file__).resolve().parent / "fanuc_er4ia_sim" / "runs"
 
 
@@ -98,6 +97,10 @@ class DigitalTwinSource:
         return value
 
     @staticmethod
+    def _placement_verified(event):
+        return all(event.get(flag, True) is True for flag in EXECUTION_CHECKS)
+
+    @staticmethod
     def _objects(document, key, filename, *, planned=False, executed=False):
         rows = document.get(key)
         if not isinstance(rows, list):
@@ -119,8 +122,9 @@ class DigitalTwinSource:
                         raise ValueError(f"{filename}: {flag} must be a boolean at {key}[{index}]")
                 if row["placement_verified"] and not row["pickup_verified"]:
                     raise ValueError(f"{filename}: placement verified without a verified pickup")
-                if "stack_support_verified" in row and type(row["stack_support_verified"]) is not bool:
-                    raise ValueError(f"{filename}: stack_support_verified must be a boolean")
+                for flag in ("placement_pose_verified", "stack_support_verified"):
+                    if flag in row and type(row[flag]) is not bool:
+                        raise ValueError(f"{filename}: {flag} must be a boolean")
         return rows
 
     def read_status(self):
@@ -182,9 +186,17 @@ class DigitalTwinSource:
             events = self._objects(report, "picks", "execution_report.json", executed=True)
             if type(report.get("task_complete")) is not bool:
                 raise ValueError("execution_report.json: task_complete must be a boolean")
-            if report["task_complete"] and (not events or any(not e["placement_verified"] or
-                    e.get("stack_support_verified") is False for e in events) or report.get("abort_reason")):
+            planned_ids = ({p["detection_id"] for p in picks} if plan is not None else None)
+            if report["task_complete"] and (
+                    not events or any(not self._placement_verified(e) for e in events)
+                    or report.get("abort_reason")
+                    or (planned_ids is not None and {e["detection_id"] for e in events} != planned_ids)):
                 raise ValueError("execution_report.json: task_complete conflicts with execution results")
+            for total, flag in (("verified_pickups", "pickup_verified"),
+                                ("verified_placements", "placement_verified")):
+                if total in report and (type(report[total]) is not int or
+                                        report[total] != sum(e[flag] for e in events)):
+                    raise ValueError(f"execution_report.json: {total} conflicts with pick results")
             status.finished = True
             status.status = "Completed" if report["task_complete"] else "Incomplete / aborted"
             status.stage = "Final execution report"
@@ -203,17 +215,15 @@ class DigitalTwinSource:
             for category, label in CATEGORIES.items():
                 attempts = [e for e in events if e["category"] == category]
                 counts[label]["attempted"] = len(attempts)
-                counts[label]["sorted"] = sum(e["placement_verified"] for e in attempts)
-                counts[label]["failed"] = sum(not e["placement_verified"] or
-                                              e.get("stack_support_verified") is False for e in attempts)
-            verified = sum(e["placement_verified"] for e in events)
+                counts[label]["sorted"] = sum(self._placement_verified(e) for e in attempts)
+                counts[label]["failed"] = len(attempts) - counts[label]["sorted"]
+            verified = sum(self._placement_verified(e) for e in events)
             status.metrics["Verified / reported attempts"] = (
                 f"{verified} / {len(events)} ({verified / len(events):.1%})" if events else "0 / 0 (no reported attempts)"
             )
             errors = []
             for event in events:
-                failed_checks = [f"{flag}=false" for flag in
-                                 ("pickup_verified", "placement_verified", "stack_support_verified")
+                failed_checks = [f"{flag}=false" for flag in EXECUTION_CHECKS
                                  if event.get(flag) is False]
                 if failed_checks:
                     status.alerts.append(Alert(
@@ -277,6 +287,9 @@ def display(value):
 
 class SortingView:
     def __init__(self, root, source: StatusSource):
+        import tkinter as tk
+        from tkinter import ttk
+
         self.root = root
         self.source = source
         self.events = queue.Queue(maxsize=1)
@@ -315,7 +328,7 @@ class SortingView:
         ttk.Label(frame, textvariable=self.fresh_text, wraplength=1000).pack(anchor="w", pady=(0, 12))
 
         ttk.Label(frame, text="Inventory and verified outcomes", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(frame, text="Sorted counts require placement verification. Attempts appear after each pick is reported.").pack(
+        ttk.Label(frame, text="Sorted counts require all reported placement checks to pass. Attempts appear after each pick.").pack(
             anchor="w", pady=(2, 8))
         self.counts = ttk.Treeview(frame, columns=("category",) + COUNT_FIELDS, show="headings", height=3,
                                    selectmode="none")
@@ -469,7 +482,15 @@ def main(argv=None):
                         help="Follow the most recently modified run directory here when --run is omitted")
     args = parser.parse_args(argv)
     source = DemoSource() if args.demo else DigitalTwinSource(args.run, args.runs_dir)
-    root = tk.Tk()
+    try:
+        import tkinter as tk
+    except ImportError:
+        parser.error("This Python lacks Tk support. Run the dashboard with a desktop Python that includes Tkinter; "
+                     "Isaac's Python can still run the adapter tests.")
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        parser.error(f"Cannot open the Tk display: {exc}. Use a desktop display or configure DISPLAY on Brev.")
     SortingView(root, source)
     root.mainloop()
 
