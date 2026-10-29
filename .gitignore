@@ -1,1 +1,3 @@
 scripts/env.local.sh
+__pycache__/
+*.pyc

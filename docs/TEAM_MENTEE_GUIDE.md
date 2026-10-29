@@ -30,14 +30,21 @@ The **default capstone task** is a **six-cube stack** (yellow×2, blue×2, red×
 
 Use this table after clone. On **NVIDIA Brev**, follow the [compute guide](https://msoe-maic.com/library?article=Rockwell-NVIDIA-Fall-2026-Compute) for Isaac Sim and Cosmos install paths.
 
-### 1. One-time repo setup
+### 1. One-time repo setup (Brev)
+
+If **Isaac Sim is already on the instance** (normal Brev template):
 
 ```bash
 cd <repo-root>
-bash scripts/setup-dev.sh
+git pull
+bash scripts/setup-brev.sh --download-model --verify-model   # first time on empty disk
+# or, if /workspace/models/Cosmos3-Nano already exists from a teammate:
+bash scripts/setup-brev.sh --verify-model
 ```
 
-This runs `fanuc_er4ia_sim/bootstrap.sh` (host `.venv`, procedural textures, **33 unit tests**) and `uv sync` for tutorial notebooks.
+That script: detects `ISAAC`, bootstraps the host venv, installs **Cosmos** (`transformers==4.57.6` + `transformers-cosmos3`), syncs tutorial notebooks, writes **`scripts/env.local.sh`**, and runs **`preflight.sh`**.
+
+Manual alternative (same result in pieces): `setup-dev.sh` + `setup-cosmos-venv.sh` + edit `env.example.sh` → `env.local.sh`.
 
 **If `python3` is missing on PATH** (some GPU images only ship Isaac’s interpreter):
 
@@ -49,11 +56,13 @@ bash fanuc_er4ia_sim/bootstrap.sh
 
 ### 2. Export paths (every new shell)
 
-Copy [`scripts/env.example.sh`](../scripts/env.example.sh), fill in your paths, then `source` it:
+After `setup-brev.sh`:
 
 ```bash
-source scripts/env.example.sh   # after editing
+source scripts/env.local.sh
 ```
+
+Or copy [`scripts/env.example.sh`](../scripts/env.example.sh) to `env.local.sh` and edit manually.
 
 Required:
 

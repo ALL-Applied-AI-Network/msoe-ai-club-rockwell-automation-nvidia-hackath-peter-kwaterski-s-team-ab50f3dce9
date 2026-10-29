@@ -46,8 +46,10 @@ if [ ! -f "$SIM/bootstrap.sh" ]; then
     exit 1
 fi
 
-echo "==> Host environment (fanuc_er4ia_sim)"
-bash "$SIM/bootstrap.sh"
+if [ "${SETUP_DEV_SKIP_HOST:-0}" != 1 ]; then
+    echo "==> Host environment (fanuc_er4ia_sim)"
+    bash "$SIM/bootstrap.sh"
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv not found on PATH. Install from https://docs.astral.sh/uv/getting-started/installation/" >&2

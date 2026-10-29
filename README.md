@@ -50,7 +50,39 @@ Step-by-step Jupyter notebooks (Git, Python, `uv`, and extending the FANUC Isaac
 
 **Team roadmap, metrics, and environment checklist:** [`docs/TEAM_MENTEE_GUIDE.md`](docs/TEAM_MENTEE_GUIDE.md). Copy [`scripts/env.example.sh`](scripts/env.example.sh) to `env.local.sh`, set paths, and `source` it each session.
 
-On a GPU instance, after exporting `ISAAC`, `COSMOS`, and model paths (see [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md)): `bash scripts/setup-dev.sh`, then `bash scripts/preflight.sh`.
+**New Brev instance (Isaac already installed):** run once from the repo root:
+
+```bash
+bash scripts/setup-brev.sh              # use existing model weights on disk
+bash scripts/setup-brev.sh --download-model --verify-model   # first time / fresh disk
+```
+
+Then each session: `source scripts/env.local.sh`. Manual steps: [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md), `bash scripts/setup-dev.sh`, `bash scripts/preflight.sh`.
+
+## Digital twin desktop dashboard
+
+Run the read-only Tkinter dashboard with a desktop Python that includes Tkinter:
+
+```bash
+python3 TkinterView.py --run fanuc_er4ia_sim/runs/stack_01
+```
+
+Use the same run folder passed to `fanuc_er4ia_sim/run_sort_pipeline.sh`. The
+dashboard can start before the run folder exists. It refreshes once per second,
+reading `detections.json`, `sort_plan.json`, `execution_events.json`, and finally
+`execution_report.json`. Execution events arrive after each pick; a quiet stage
+does not mean the simulator has stopped. Only verified placements count as sorted.
+Planner skip reasons, failed execution checks, and the final abort reason appear
+in the alerts table. Unavailable measurements stay **Not measured**.
+
+With no arguments, the dashboard follows the most recently modified run folder
+under `fanuc_er4ia_sim/runs/`. Use `--runs-dir /your/local/runs` to watch another
+parent folder, or `--demo` for explicitly fictional example data. For a twin
+running on Brev, synchronize its run folder to the desktop and point `--run` at
+that local folder. The dashboard reads files; it does not start or control Isaac
+Sim and does not establish a remote connection itself.
+
+Run the dashboard's host tests with `python3 -m unittest test_tkinter_view`.
 
 ## Working in this repository
 
