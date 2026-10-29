@@ -59,6 +59,8 @@ bash scripts/setup-brev.sh --download-model --verify-model   # first time / fres
 
 Then each session: `source scripts/env.local.sh`. Manual steps: [`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md), `bash scripts/setup-dev.sh`, `bash scripts/preflight.sh`.
 
+**Git push on Brev:** Cursor/VS Code inject `GIT_ASKPASS` and a git IPC socket that fails in SSH terminals (you see `ECONNREFUSED ... vscode-git-....sock`). After `source scripts/env.local.sh`, push with `bash scripts/git-push.sh` — it clears those variables and prompts for GitHub username + PAT (authorize the token for org SSO if required).
+
 ## Digital twin desktop dashboard
 
 Run the read-only Tkinter dashboard with a desktop Python that includes Tkinter:
@@ -83,6 +85,33 @@ that local folder. The dashboard reads files; it does not start or control Isaac
 Sim and does not establish a remote connection itself.
 
 Run the dashboard's host tests with `python3 -m unittest test_tkinter_view`.
+
+### Stepwise execution and live laptop stream
+
+On the GPU host, run the stepwise pipeline (one verified cube at a time, with
+bounded live recovery on missed grasps inside a single Isaac session):
+
+```bash
+cd fanuc_er4ia_sim
+export HOST_PYTHON="$PWD/.venv/bin/python"
+bash run_step_pipeline.sh runs/stack_step_01
+```
+
+This starts a localhost HTTP adapter on port `8765` (override with
+`TWIN_STREAM_PORT`) that serves `/status`, `/step_state`, and `/frame`
+(`live_frame.jpg` from the simulator). From your laptop, forward the port over
+SSH, then open the dashboard against the tunnel:
+
+```bash
+ssh -L 8765:127.0.0.1:8765 user@your-brev-host
+python3 TkinterView.py --url http://127.0.0.1:8765
+```
+
+Step state is written to `step_state.json` in the run folder. After a failed
+grasp, the simulator captures `mid_step_capture.png` and calls
+`live_step_recovery.py` on the host (requires `HOST_PYTHON` and the host
+`.venv`). Placement, support, and IK failures stop the run without autonomous
+motion retries.
 
 ## Bounded recovery replay (cube missed grasp)
 

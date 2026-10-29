@@ -155,6 +155,487 @@ def validate_plan(plan):
                 raise ValueError("Invalid plan coordinates")
 
 
+def capture_table_image(cam, path):
+    import cv2
+
+    rgba = cam.get_rgba()
+    if rgba is None:
+        raise RuntimeError("Camera returned no image for capture")
+    cv2.imwrite(
+        str(path),
+        cv2.cvtColor(rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR),
+    )
+
+
+def execute_one_pick(
+    pick,
+    *,
+    wrappers,
+    poses,
+    world,
+    command,
+    fk_mod,
+    ik_mod,
+    limits,
+    tool,
+    home,
+    down,
+    q,
+    arm,
+    arm_idx,
+    idx,
+    frame,
+    fps,
+    physics_only,
+    camera_name,
+    out,
+    side_out,
+    cam,
+    side,
+    events,
+    live_frame=None,
+):
+    """Run one planned grasp; return event, updated q/frame, and optional abort reason."""
+    pick = dict(pick)
+    if pick.get("spread_dir") is not None:
+        r, _ = fk_mod.fk(q)
+        current = r @ np.array(C.FINGER_SPREAD_AXIS)
+        spread = np.array(pick["spread_dir"], float)
+        if np.dot(current, spread) < 0:
+            spread = -spread
+        pick["spread_dir"] = spread.tolist()
+        if pick.get("place_spread_dir") is not None:
+            destination = np.array(pick["place_spread_dir"], float)
+            if np.dot(spread, destination) < 0:
+                destination = -destination
+            pick["place_spread_dir"] = destination.tolist()
+    start = poses()
+    prefix = {"cap": "SortCap", "cube": "SortCube", "vial": "SortVial"}[
+        pick["category"]
+    ]
+    candidates = [name for name in wrappers if name.startswith(prefix)]
+    tracked = (
+        min(
+            candidates,
+            key=lambda name: np.linalg.norm(
+                np.array(start[name]["centre"][:2]) - pick["xy"]
+            ),
+        )
+        if candidates
+        else None
+    )
+    if (
+        tracked
+        and np.linalg.norm(np.array(start[tracked]["centre"][:2]) - pick["xy"])
+        > 0.04
+    ):
+        tracked = None
+    event = {
+        "detection_id": pick["detection_id"],
+        "category": pick["category"],
+        "tracked_object": tracked,
+        "pickup_verified": False,
+        "placement_verified": False,
+        "trajectory_ik_failures": 0,
+    }
+    if "stack_level" in pick:
+        event.update(
+            stack_level=pick["stack_level"],
+            colour=pick["colour"],
+            perceived_yaw_deg=pick["yaw_deg"],
+            grasp_spread_dir=pick["spread_dir"],
+            place_spread_dir=pick["place_spread_dir"],
+        )
+    event["initial_positions"] = start
+    for name, p0, p1, duration, j0, j1, spread in segments(pick, home):
+        spread_start = None
+        if spread is not None and name in ("approach", "carry"):
+            r, _ = fk_mod.fk(q)
+            s = r @ np.array(C.FINGER_SPREAD_AXIS)
+            s[2] = 0
+            s /= np.linalg.norm(s)
+            spread = np.array(spread, float)
+            spread_start = s
+        n = round(duration * fps)
+        for i in range(n):
+            t = ease((i + 1) / n)
+            target = p0 + (p1 - p0) * t
+            direction = (
+                turn(spread_start, spread, t)
+                if spread_start is not None
+                else spread
+            )
+            q, ok = ik_mod.solve(
+                q, target, down, limits, tool_offset=tool, spread_dir=direction
+            )
+            if not ok:
+                q, ok = ik_mod.solve(
+                    q,
+                    target,
+                    down,
+                    limits,
+                    tool_offset=tool,
+                    spread_dir=direction,
+                    iters=500,
+                    damping=0.02,
+                )
+            r, actual = fk_mod.tool_pose(q, tool)
+            aligned = (
+                direction is None
+                or abs(np.dot(r @ np.array(C.FINGER_SPREAD_AXIS), direction))
+                > 0.999
+            )
+            if not ok or np.linalg.norm(actual - target) > 0.001 or not aligned:
+                event["trajectory_ik_failures"] += 1
+                raise RuntimeError(
+                    f'IK failed: detection {pick["detection_id"]}, {name}, frame {i}; refusing off-target descent'
+                )
+            command(q, j0 + (j1 - j0) * t)
+            for _ in range(2):
+                world.step(render=not physics_only)
+            if cam is not None:
+                import cv2
+
+                rgba = cam.get_rgba()
+                if rgba is None:
+                    raise RuntimeError("Camera returned no image")
+                bgr = cv2.cvtColor(
+                    rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR
+                )
+                cv2.imwrite(str(out / f"f{frame:05d}.png"), bgr)
+                if live_frame is not None:
+                    live_frame.maybe_publish(bgr)
+            if side is not None:
+                import cv2
+
+                rgba_side = side.get_rgba()
+                if rgba_side is not None:
+                    side_bgr = cv2.cvtColor(
+                        rgba_side[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR
+                    )
+                    cv2.imwrite(str(side_out / f"f{frame:05d}.png"), side_bgr)
+                    if live_frame is not None and camera_name != "table":
+                        live_frame.maybe_publish(side_bgr)
+            frame += 1
+        if name in ("descend", "dwell", "lift", "lower", "release"):
+            measured = arm.get_joint_positions()
+            rot, tip = fk_mod.tool_pose(measured[arm_idx], tool)
+            measured_spread = rot @ np.array(C.FINGER_SPREAD_AXIS)
+            event.setdefault("phase_measurements", {})[name] = {
+                "actual_tip_robot_frame_m": tip.tolist(),
+                "actual_spread_dir": measured_spread.tolist(),
+                "commanded_spread_dir": (
+                    np.asarray(direction).tolist()
+                    if direction is not None
+                    else None
+                ),
+                "wrist_joint_deg": float(np.degrees(measured[arm_idx][-1])),
+                "commanded_tip_robot_frame_m": target.tolist(),
+                "tip_error_mm": float(np.linalg.norm(tip - target) * 1000),
+                "object_centre_world_m": (
+                    poses()[tracked]["centre"] if tracked else None
+                ),
+            }
+        if name == "dwell":
+            jp = arm.get_joint_positions()
+            event["jaw_gap_mm"] = float(
+                (2 * C.JAW_OPEN - abs(jp[idx["jaw_l"]]) - abs(jp[idx["jaw_r"]]))
+                * 1000
+            )
+        if name == "lift":
+            lifted = poses()
+            event["objects_lifted"] = [
+                key
+                for key in wrappers
+                if lifted[key]["centre"][2] - start[key]["centre"][2] > 0.025
+            ]
+            event["pickup_verified"] = tracked in event["objects_lifted"]
+            print(
+                f'[sort] detection {pick["detection_id"]}: lifted {event["objects_lifted"]}; pickup={event["pickup_verified"]}',
+                flush=True,
+            )
+    finish = poses()
+    if tracked:
+        position = np.array(finish[tracked]["centre"])
+        event["placement_error_mm"] = float(
+            np.linalg.norm(position[:2] - pick["place_xy"]) * 1000
+        )
+        expected_z = (
+            C.TABLE_TOP_Z
+            + C.SURFACE_DZ
+            + {
+                "cube": 1.5 * C.CUBE_EDGE,
+                "cap": C.CAP_HEIGHT / 2,
+                "vial": C.VIAL_RADIUS,
+            }[pick["category"]]
+        )
+        if "stack_level" in pick:
+            expected_z = C.TABLE_TOP_Z + pick["expected_centre_z"]
+        event["placement_verified"] = bool(
+            event["pickup_verified"]
+            and event["placement_error_mm"] < 20
+            and abs(position[2] - expected_z) < 0.01
+        )
+        if "stack_level" in pick:
+            event["placement_verified"] = bool(
+                event["pickup_verified"]
+                and event["placement_error_mm"]
+                < C.CUBE_STACK_SITE_TOLERANCE * 1000
+                and abs(position[2] - expected_z) < 0.0015
+            )
+            event["placement_yaw_error_deg_mod90"] = abs(
+                square_yaw(finish[tracked]["yaw_deg"])
+            )
+            event["placement_tilt_deg"] = finish[tracked]["tilt_deg"]
+            event["placement_pose_verified"] = bool(
+                event["placement_yaw_error_deg_mod90"] < 8
+                and event["placement_tilt_deg"] < 5
+            )
+            event["placement_verified"] = (
+                event["placement_verified"] and event["placement_pose_verified"]
+            )
+            event["stack_support_verified"] = verify_cube_stack(
+                finish, events + [event]
+            )
+    abort_reason = None
+    return event, q, frame, abort_reason
+
+
+def _write_events(run, events):
+    from run_artifacts import atomic_write_json
+
+    atomic_write_json(run / "execution_events.json", events)
+
+
+def _invoke_live_recovery(run):
+    import subprocess
+
+    host = os.environ.get("HOST_PYTHON")
+    script = Path(__file__).resolve().parent / "live_step_recovery.py"
+    if not host or not Path(host).is_file() or not script.is_file():
+        print("[sort] HOST_PYTHON unset; cannot run live recovery", flush=True)
+        return None
+    result = subprocess.run(
+        [host, str(script), "--run", str(run)],
+        cwd=str(script.parent),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout, flush=True)
+    if result.stderr:
+        print(result.stderr, flush=True)
+    from run_artifacts import read_json
+
+    return read_json(run / "live_recovery_decision.json")
+
+
+def _run_pick_loop(
+    *,
+    run,
+    plan,
+    wrappers,
+    poses,
+    world,
+    command,
+    limits,
+    tool,
+    home,
+    down,
+    q,
+    arm,
+    arm_idx,
+    idx,
+    frame,
+    args,
+    out,
+    side_out,
+    cam,
+    side,
+    before,
+    stepwise,
+):
+    from recovery_policy import classify_event
+    from run_artifacts import LiveFramePublisher
+    from step_controller import (
+        advance_after_success,
+        apply_recovery_plan,
+        begin_recovery,
+        cube_stack_failure_reason,
+        current_pick,
+        is_terminal,
+        load_step_state,
+        mark_phase,
+        mark_stopped,
+        save_step_state,
+    )
+
+    events = []
+    abort_reason = None
+    live_frame = LiveFramePublisher(run) if stepwise else None
+    step_state = load_step_state(run, plan) if stepwise else None
+    if stepwise:
+        step_state = mark_phase(step_state, "ready")
+        save_step_state(run, step_state)
+
+    index = 0
+    while True:
+        if stepwise:
+            if step_state is None or is_terminal(step_state):
+                break
+            pick = current_pick(plan, step_state)
+        else:
+            if index >= len(plan["picks"]):
+                break
+            pick = plan["picks"][index]
+        if pick is None:
+            break
+        if stepwise:
+            step_state = mark_phase(step_state, "executing")
+            save_step_state(run, step_state)
+        event, q, frame, _ = execute_one_pick(
+            pick,
+            wrappers=wrappers,
+            poses=poses,
+            world=world,
+            command=command,
+            fk_mod=fk,
+            ik_mod=ik,
+            limits=limits,
+            tool=tool,
+            home=home,
+            down=down,
+            q=q,
+            arm=arm,
+            arm_idx=arm_idx,
+            idx=idx,
+            frame=frame,
+            fps=args.fps,
+            physics_only=args.physics_only,
+            camera_name=args.camera,
+            out=out,
+            side_out=side_out,
+            cam=cam,
+            side=side,
+            events=events,
+            live_frame=live_frame,
+        )
+        events.append(event)
+        _write_events(run, events)
+        if stepwise:
+            step_state = mark_phase(step_state, "verifying")
+            save_step_state(run, step_state)
+
+        stack_abort = plan.get("task") == "cube_stack" and (
+            not event["placement_verified"]
+            or not event.get("stack_support_verified")
+        )
+        if stack_abort and not stepwise:
+            abort_reason = f'Cube tower stopped at level {pick["stack_level"]}: pickup, placement or supporting stack failed'
+            print(f"[sort] {abort_reason}", flush=True)
+            break
+
+        if stepwise:
+            failure_type = classify_event(event)
+            success = failure_type is None and cube_stack_failure_reason(event) is None
+            if success:
+                step_state = advance_after_success(step_state, plan)
+                save_step_state(run, step_state)
+                if is_terminal(step_state):
+                    break
+                plan = json.loads((run / "sort_plan.json").read_text())
+                continue
+            if failure_type != "missed_grasp":
+                reason = cube_stack_failure_reason(event) or failure_type or "step failed"
+                step_state = mark_stopped(
+                    step_state,
+                    f'Cube tower stopped at level {pick.get("stack_level")}: {reason}',
+                )
+                save_step_state(run, step_state)
+                abort_reason = step_state["terminal_reason"]
+                print(f"[sort] {abort_reason}", flush=True)
+                break
+            if cam is not None:
+                capture_table_image(cam, run / "mid_step_capture.png")
+            step_state = begin_recovery(step_state)
+            save_step_state(run, step_state)
+            decision = _invoke_live_recovery(run)
+            action = (decision or {}).get("action")
+            if action == "stop" or decision is None:
+                step_state = mark_stopped(
+                    step_state, "Live recovery stopped after missed grasp"
+                )
+                save_step_state(run, step_state)
+                abort_reason = step_state["terminal_reason"]
+                break
+            events.pop()
+            _write_events(run, events)
+            plan = json.loads((run / "sort_plan.json").read_text())
+            step_state = apply_recovery_plan(step_state, plan)
+            save_step_state(run, step_state)
+            continue
+
+        index += 1
+
+    if stepwise and step_state and step_state.get("phase") == "ready" and not abort_reason:
+        if len(events) == len(plan["picks"]) and all(
+            e.get("placement_verified") for e in events
+        ):
+            step_state = mark_phase(step_state, "completed")
+            save_step_state(run, step_state)
+
+    after = poses()
+    report = {
+        "before": before,
+        "after": after,
+        "picks": events,
+        "frames": frame,
+        "rendered": not args.physics_only,
+        "task": plan.get("task", "sort"),
+        "abort_reason": abort_reason,
+        "stepwise": stepwise,
+        "hardware": {
+            "gripper_model": C.GRIPPER_MODEL,
+            "jaw_stroke_m": C.JAW_STROKE,
+            "open_gap_m": 2 * C.JAW_OPEN,
+            "finger_length_m": C.FINGER_LENGTH,
+            "cube_edge_m": C.CUBE_EDGE,
+            "cube_tip_clearance_m": C.CUBE_TIP_CLEARANCE,
+        },
+        "task_complete": bool(plan["picks"])
+        and abort_reason is None
+        and len(events) == len(plan["picks"])
+        and all(e["placement_verified"] for e in events),
+        "verified_pickups": sum(e["pickup_verified"] for e in events),
+        "verified_placements": sum(e["placement_verified"] for e in events),
+    }
+    gt = json.loads((run / "ground_truth.json").read_text())
+    wide = [
+        g["name"] for g in gt["objects"] if g.get("orientation") == "wide_end_up"
+    ]
+    report["wide_caps"] = [
+        {
+            "name": name,
+            "displacement_mm": float(
+                np.linalg.norm(
+                    np.array(after[name]["centre"]) - before[name]["centre"]
+                )
+                * 1000
+            ),
+            "picked_up": any(name in e.get("objects_lifted", []) for e in events),
+        }
+        for name in wide
+    ]
+    from run_artifacts import atomic_write_json
+
+    atomic_write_json(run / "execution_report.json", report)
+    print(
+        f'[sort] {report["verified_pickups"]}/{len(events)} pickups; {report["verified_placements"]} verified placements; {frame} frames',
+        flush=True,
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -169,6 +650,11 @@ def main():
         "--physics-only",
         action="store_true",
         help="validate physical grasps without rendering frames",
+    )
+    ap.add_argument(
+        "--stepwise",
+        action="store_true",
+        help="execute one verified cube at a time with live recovery on missed grasps",
     )
     a = ap.parse_args()
     if a.fps != 30:
@@ -312,9 +798,7 @@ def main():
             return values
 
         before = poses()
-        events = []
         frame = 0
-        abort_reason = None
         out.mkdir(parents=True, exist_ok=True)
         # Additional fixed side camera provides a clear lift/contact review.
         side = None
@@ -325,265 +809,29 @@ def main():
             side.initialize()
         side_out = run / "side_frames"
         side_out.mkdir(exist_ok=True)
-        for pick in plan["picks"]:
-            # Select equivalent jaw-direction signs once for the whole grasp,
-            # so approach/descend and carry/lower cannot differ by 180 degrees.
-            pick = dict(pick)
-            if pick.get("spread_dir") is not None:
-                r, _ = fk.fk(q)
-                current = r @ np.array(C.FINGER_SPREAD_AXIS)
-                spread = np.array(pick["spread_dir"], float)
-                if np.dot(current, spread) < 0:
-                    spread = -spread
-                pick["spread_dir"] = spread.tolist()
-                if pick.get("place_spread_dir") is not None:
-                    destination = np.array(pick["place_spread_dir"], float)
-                    if np.dot(spread, destination) < 0:
-                        destination = -destination
-                    pick["place_spread_dir"] = destination.tolist()
-            start = poses()
-            prefix = {"cap": "SortCap", "cube": "SortCube", "vial": "SortVial"}[
-                pick["category"]
-            ]
-            candidates = [name for name in wrappers if name.startswith(prefix)]
-            # This association is for execution reporting only, never motion commands.
-            tracked = (
-                min(
-                    candidates,
-                    key=lambda name: np.linalg.norm(
-                        np.array(start[name]["centre"][:2]) - pick["xy"]
-                    ),
-                )
-                if candidates
-                else None
-            )
-            if (
-                tracked
-                and np.linalg.norm(np.array(start[tracked]["centre"][:2]) - pick["xy"])
-                > 0.04
-            ):
-                tracked = None
-            event = {
-                "detection_id": pick["detection_id"],
-                "category": pick["category"],
-                "tracked_object": tracked,
-                "pickup_verified": False,
-                "placement_verified": False,
-                "trajectory_ik_failures": 0,
-            }
-            if "stack_level" in pick:
-                event.update(
-                    stack_level=pick["stack_level"],
-                    colour=pick["colour"],
-                    perceived_yaw_deg=pick["yaw_deg"],
-                    grasp_spread_dir=pick["spread_dir"],
-                    place_spread_dir=pick["place_spread_dir"],
-                )
-            event["initial_positions"] = start
-            for name, p0, p1, duration, j0, j1, spread in segments(pick, home):
-                spread_start = None
-                if spread is not None and name in ("approach", "carry"):
-                    r, _ = fk.fk(q)
-                    s = r @ np.array(C.FINGER_SPREAD_AXIS)
-                    s[2] = 0
-                    s /= np.linalg.norm(s)
-                    spread = np.array(spread, float)
-                    spread_start = s
-                n = round(duration * a.fps)
-                for i in range(n):
-                    t = ease((i + 1) / n)
-                    target = p0 + (p1 - p0) * t
-                    direction = (
-                        turn(spread_start, spread, t)
-                        if spread_start is not None
-                        else spread
-                    )
-                    q, ok = ik.solve(
-                        q, target, down, limits, tool_offset=tool, spread_dir=direction
-                    )
-                    if not ok:
-                        q, ok = ik.solve(
-                            q,
-                            target,
-                            down,
-                            limits,
-                            tool_offset=tool,
-                            spread_dir=direction,
-                            iters=500,
-                            damping=0.02,
-                        )
-                    r, actual = fk.tool_pose(q, tool)
-                    aligned = (
-                        direction is None
-                        or abs(np.dot(r @ np.array(C.FINGER_SPREAD_AXIS), direction))
-                        > 0.999
-                    )
-                    if not ok or np.linalg.norm(actual - target) > 0.001 or not aligned:
-                        event["trajectory_ik_failures"] += 1
-                        raise RuntimeError(
-                            f'IK failed: detection {pick["detection_id"]}, {name}, frame {i}; refusing off-target descent'
-                        )
-                    command(q, j0 + (j1 - j0) * t)
-                    for _ in range(2):
-                        world.step(render=not a.physics_only)
-                    if cam is not None:
-                        rgba = cam.get_rgba()
-                        if rgba is None:
-                            raise RuntimeError("Camera returned no image")
-                        cv2.imwrite(
-                            str(out / f"f{frame:05d}.png"),
-                            cv2.cvtColor(
-                                rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR
-                            ),
-                        )
-                    if side is not None:
-                        rgba_side = side.get_rgba()
-                        if rgba_side is not None:
-                            cv2.imwrite(
-                                str(side_out / f"f{frame:05d}.png"),
-                                cv2.cvtColor(
-                                    rgba_side[:, :, :3].astype(np.uint8),
-                                    cv2.COLOR_RGB2BGR,
-                                ),
-                            )
-                    frame += 1
-                if name in ("descend", "dwell", "lift", "lower", "release"):
-                    measured = arm.get_joint_positions()
-                    rot, tip = fk.tool_pose(measured[arm_idx], tool)
-                    measured_spread = rot @ np.array(C.FINGER_SPREAD_AXIS)
-                    event.setdefault("phase_measurements", {})[name] = {
-                        "actual_tip_robot_frame_m": tip.tolist(),
-                        "actual_spread_dir": measured_spread.tolist(),
-                        "commanded_spread_dir": (
-                            np.asarray(direction).tolist()
-                            if direction is not None
-                            else None
-                        ),
-                        "wrist_joint_deg": float(np.degrees(measured[arm_idx][-1])),
-                        "commanded_tip_robot_frame_m": target.tolist(),
-                        "tip_error_mm": float(np.linalg.norm(tip - target) * 1000),
-                        "object_centre_world_m": (
-                            poses()[tracked]["centre"] if tracked else None
-                        ),
-                    }
-                if name == "dwell":
-                    jp = arm.get_joint_positions()
-                    event["jaw_gap_mm"] = float(
-                        (2 * C.JAW_OPEN - abs(jp[idx["jaw_l"]]) - abs(jp[idx["jaw_r"]]))
-                        * 1000
-                    )
-                if name == "lift":
-                    lifted = poses()
-                    event["objects_lifted"] = [
-                        key
-                        for key in wrappers
-                        if lifted[key]["centre"][2] - start[key]["centre"][2] > 0.025
-                    ]
-                    event["pickup_verified"] = tracked in event["objects_lifted"]
-                    print(
-                        f'[sort] detection {pick["detection_id"]}: lifted {event["objects_lifted"]}; pickup={event["pickup_verified"]}',
-                        flush=True,
-                    )
-            finish = poses()
-            if tracked:
-                position = np.array(finish[tracked]["centre"])
-                event["placement_error_mm"] = float(
-                    np.linalg.norm(position[:2] - pick["place_xy"]) * 1000
-                )
-                expected_z = (
-                    C.TABLE_TOP_Z
-                    + C.SURFACE_DZ
-                    + {
-                        "cube": 1.5 * C.CUBE_EDGE,
-                        "cap": C.CAP_HEIGHT / 2,
-                        "vial": C.VIAL_RADIUS,
-                    }[pick["category"]]
-                )
-                if "stack_level" in pick:
-                    expected_z = C.TABLE_TOP_Z + pick["expected_centre_z"]
-                event["placement_verified"] = bool(
-                    event["pickup_verified"]
-                    and event["placement_error_mm"] < 20
-                    and abs(position[2] - expected_z) < 0.01
-                )
-                if "stack_level" in pick:
-                    event["placement_verified"] = bool(
-                        event["pickup_verified"]
-                        and event["placement_error_mm"]
-                        < C.CUBE_STACK_SITE_TOLERANCE * 1000
-                        and abs(position[2] - expected_z) < 0.0015
-                    )
-                    event["placement_yaw_error_deg_mod90"] = abs(
-                        square_yaw(finish[tracked]["yaw_deg"])
-                    )
-                    event["placement_tilt_deg"] = finish[tracked]["tilt_deg"]
-                    event["placement_pose_verified"] = bool(
-                        event["placement_yaw_error_deg_mod90"] < 8
-                        and event["placement_tilt_deg"] < 5
-                    )
-                    event["placement_verified"] = (
-                        event["placement_verified"] and event["placement_pose_verified"]
-                    )
-                    event["stack_support_verified"] = verify_cube_stack(
-                        finish, events + [event]
-                    )
-            events.append(event)
-            (run / "execution_events.json").write_text(
-                json.dumps(events, indent=2) + "\n"
-            )
-            if plan.get("task") == "cube_stack" and (
-                not event["placement_verified"]
-                or not event.get("stack_support_verified")
-            ):
-                abort_reason = f'Cube tower stopped at level {pick["stack_level"]}: pickup, placement or supporting stack failed'
-                print(f"[sort] {abort_reason}", flush=True)
-                break
-        after = poses()
-        report = {
-            "before": before,
-            "after": after,
-            "picks": events,
-            "frames": frame,
-            "rendered": not a.physics_only,
-            "task": plan.get("task", "sort"),
-            "abort_reason": abort_reason,
-            "hardware": {
-                "gripper_model": C.GRIPPER_MODEL,
-                "jaw_stroke_m": C.JAW_STROKE,
-                "open_gap_m": 2 * C.JAW_OPEN,
-                "finger_length_m": C.FINGER_LENGTH,
-                "cube_edge_m": C.CUBE_EDGE,
-                "cube_tip_clearance_m": C.CUBE_TIP_CLEARANCE,
-            },
-            "task_complete": bool(plan["picks"])
-            and abort_reason is None
-            and len(events) == len(plan["picks"])
-            and all(e["placement_verified"] for e in events),
-            "verified_pickups": sum(e["pickup_verified"] for e in events),
-            "verified_placements": sum(e["placement_verified"] for e in events),
-        }
-        # Evaluate untouched wide-up objects only after executing the vision plan.
-        gt = json.loads((run / "ground_truth.json").read_text())
-        wide = [
-            g["name"] for g in gt["objects"] if g.get("orientation") == "wide_end_up"
-        ]
-        report["wide_caps"] = [
-            {
-                "name": name,
-                "displacement_mm": float(
-                    np.linalg.norm(
-                        np.array(after[name]["centre"]) - before[name]["centre"]
-                    )
-                    * 1000
-                ),
-                "picked_up": any(name in e.get("objects_lifted", []) for e in events),
-            }
-            for name in wide
-        ]
-        (run / "execution_report.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(
-            f'[sort] {report["verified_pickups"]}/{len(events)} pickups; {report["verified_placements"]} verified placements; {frame} frames',
-            flush=True,
+        _run_pick_loop(
+            run=run,
+            plan=plan,
+            wrappers=wrappers,
+            poses=poses,
+            world=world,
+            command=command,
+            limits=limits,
+            tool=tool,
+            home=home,
+            down=down,
+            q=q,
+            arm=arm,
+            arm_idx=arm_idx,
+            idx=idx,
+            frame=frame,
+            args=a,
+            out=out,
+            side_out=side_out,
+            cam=cam,
+            side=side,
+            before=before,
+            stepwise=a.stepwise,
         )
     except Exception:
         # Kit shutdown may terminate Python before the exception is displayed.

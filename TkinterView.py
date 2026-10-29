@@ -48,6 +48,10 @@ class ViewStatus:
     alerts: list = field(default_factory=list)
     demonstration: bool = False
     finished: bool = False
+    controller_phase: Optional[str] = None
+    current_step: Optional[str] = None
+    frame_url: Optional[str] = None
+    frame_jpeg: Optional[bytes] = field(default=None, repr=False)
 
 
 
@@ -239,8 +243,60 @@ class DigitalTwinSource:
             if errors:
                 status.metrics["Maximum placement error"] = f"{max(errors):.3f} mm (n={len(errors)} reported picks)"
 
+        step_state = self._read(run / "step_state.json", dict, timestamps)
+        if isinstance(step_state, dict):
+            status.controller_phase = step_state.get("phase")
+            index = step_state.get("current_pick_index")
+            if plan is not None and isinstance(index, int):
+                picks = plan.get("picks", [])
+                if 0 <= index < len(picks):
+                    pick = picks[index]
+                    level = pick.get("stack_level")
+                    colour = pick.get("colour")
+                    if level is not None and colour:
+                        status.current_step = f"Cube {colour} (level {int(level) + 1})"
+                    else:
+                        status.current_step = f"Pick index {index + 1} of {len(picks)}"
+
         if timestamps:
             status.generated_at = datetime.fromtimestamp(max(timestamps), timezone.utc)
+        return status
+
+
+class RemoteStatusSource:
+    """HTTP adapter for a twin_stream_server on the GPU host (use SSH port forward)."""
+
+    def __init__(self, base_url: str, *, timeout: float = 2.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def read_status(self) -> ViewStatus:
+        import urllib.error
+        import urllib.request
+
+        from dashboard_status import status_from_dict
+
+        try:
+            with urllib.request.urlopen(
+                f"{self.base_url}/status", timeout=self.timeout
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.URLError as exc:
+            raise ConnectionError(f"Remote status unavailable: {exc}") from exc
+        if "error" in payload and "run_id" not in payload:
+            raise ValueError(payload["error"])
+        status = status_from_dict(payload)
+        status.source = self.base_url
+        try:
+            with urllib.request.urlopen(
+                f"{self.base_url}/frame", timeout=self.timeout
+            ) as response:
+                status.frame_jpeg = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise ConnectionError(f"Remote frame unavailable: {exc}") from exc
+        except urllib.error.URLError:
+            pass
         return status
 
 
@@ -358,6 +414,11 @@ class SortingView:
         self.alerts.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         self.detail = tk.StringVar(value="Select an alert to read its full reason.")
+        self.step_text = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.step_text, wraplength=1000).pack(anchor="w", pady=(0, 8))
+        self.live_frame = ttk.Label(frame)
+        self.live_frame.pack(anchor="w", pady=(0, 8))
+        self._photo = None
 
         ttk.Label(frame, textvariable=self.detail, wraplength=1000).pack(anchor="w", pady=8)
         self.alerts.bind("<<TreeviewSelect>>", self.show_alert)
@@ -411,6 +472,25 @@ class SortingView:
         self.banner.configure(text=banner)
         self.run_text.set(
             f"Run: {status.run_id}\nStatus: {status.status}\nPipeline stage: {status.stage}\nSource: {status.source}")
+        step_parts = []
+        if status.controller_phase:
+            step_parts.append(f"Controller phase: {status.controller_phase}")
+        if status.current_step:
+            step_parts.append(f"Current step: {status.current_step}")
+        self.step_text.set(" | ".join(step_parts))
+        if status.frame_jpeg:
+            import tempfile
+            import tkinter as tk
+
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+                handle.write(status.frame_jpeg)
+                path = handle.name
+            photo = tk.PhotoImage(file=path)
+            self._photo = photo
+            self.live_frame.configure(image=photo)
+        else:
+            self.live_frame.configure(image="")
+            self._photo = None
         for category in CATEGORIES.values():
             counts = status.counts.get(category, {})
             self.counts.item(category, values=(category,) + tuple(display(counts.get(k)) for k in COUNT_FIELDS))
@@ -477,11 +557,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--run", type=Path, help="Follow one pipeline run directory, even before it exists")
+    selection.add_argument(
+        "--url",
+        help="Poll a twin_stream_server base URL (e.g. http://127.0.0.1:8765 via SSH tunnel)",
+    )
     selection.add_argument("--demo", action="store_true", help="Show explicitly fictional example data")
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR,
                         help="Follow the most recently modified run directory here when --run is omitted")
     args = parser.parse_args(argv)
-    source = DemoSource() if args.demo else DigitalTwinSource(args.run, args.runs_dir)
+    if args.demo:
+        source = DemoSource()
+    elif args.url:
+        source = RemoteStatusSource(args.url)
+    else:
+        source = DigitalTwinSource(args.run, args.runs_dir)
     try:
         import tkinter as tk
     except ImportError:

@@ -12,6 +12,18 @@ simulation. Every replay reconstructs the scene from that run's saved
 command or support a physical robot and must not be presented as hardware or
 in-session recovery.
 
+## Live stepwise recovery (same Isaac session)
+
+`sort_scene.py --stepwise` (see `run_step_pipeline.sh`) executes one cube at a
+time inside a single simulation. After each pick, simulator verification gates
+the next step. On a **missed grasp**, Isaac writes `mid_step_capture.png` and
+calls `live_step_recovery.py` on the host (`HOST_PYTHON` must point at the
+`.venv`). That reuses `decide()` / `apply_action()` from this module. Only
+missed-grasp failures are retried live; placement, support, IK, and uncertain
+states stop the controller. Artifacts: `step_state.json`,
+`live_recovery_decision.json`, and throttled `live_frame.jpg` for the HTTP
+dashboard adapter.
+
 The tool only automatically retries a classified missed cube grasp. Wrong
 object, unreachable motion, placement/support failure, collision, detected
 drop, uncertain state, and execution crash stop for review.

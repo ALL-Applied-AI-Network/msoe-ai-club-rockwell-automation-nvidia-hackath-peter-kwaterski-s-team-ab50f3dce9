@@ -6,9 +6,15 @@ from pathlib import Path
 import queue
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from TkinterView import COUNT_FIELDS, DemoSource, DigitalTwinSource, SortingView
+from TkinterView import (
+    COUNT_FIELDS,
+    DemoSource,
+    DigitalTwinSource,
+    RemoteStatusSource,
+    SortingView,
+)
 
 
 class DigitalTwinSourceTests(unittest.TestCase):
@@ -190,6 +196,65 @@ class DigitalTwinSourceTests(unittest.TestCase):
         self.assertTrue(status.demonstration)
         self.assertTrue(status.finished)
         self.assertEqual(status.counts["Cubes"]["sorted"], 5)
+
+    def test_step_state_surfaces_controller_fields(self):
+        self.plan()
+        self.write(
+            "step_state.json",
+            dict(
+                version=1,
+                phase="executing",
+                current_pick_index=0,
+                completed_pick_indices=[],
+            ),
+        )
+        status = self.source.read_status()
+        self.assertEqual(status.controller_phase, "executing")
+        self.assertEqual(status.current_step, "Pick index 1 of 6")
+
+
+class RemoteStatusSourceTests(unittest.TestCase):
+    @patch("urllib.request.urlopen")
+    def test_remote_status_and_optional_frame(self, urlopen):
+        status_payload = json.dumps(
+            {
+                "run_id": "remote",
+                "status": "Running",
+                "stage": "Physical execution",
+                "source": "http://127.0.0.1:8765",
+                "simulated": True,
+                "generated_at": None,
+                "counts": {},
+                "metrics": {},
+                "alerts": [],
+                "demonstration": False,
+                "finished": False,
+                "controller_phase": "executing",
+                "current_step": "Cube yellow (level 1)",
+            }
+        ).encode("utf-8")
+
+        class Response:
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        urlopen.side_effect = [
+            Response(status_payload),
+            Response(b"\xff\xd8\xff"),
+        ]
+        status = RemoteStatusSource("http://127.0.0.1:8765").read_status()
+        self.assertEqual(status.run_id, "remote")
+        self.assertEqual(status.controller_phase, "executing")
+        self.assertEqual(status.frame_jpeg, b"\xff\xd8\xff")
 
 
 class PollingTests(unittest.TestCase):

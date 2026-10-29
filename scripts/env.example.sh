@@ -17,3 +17,6 @@ export COSMOS3_ROOT="${COSMOS3_ROOT:-/workspace/cosmos-framework}"
 # export FANUC_ROBOT_USD=/path/to/er4ia.usd
 # export HF_HOME=$HOME/.cache/huggingface
 export HOST_PYTHON="${HOST_PYTHON:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/fanuc_er4ia_sim/.venv/bin/python}"
+
+# --- Git on Brev (optional): plain `git push` uses a broken VS Code credential socket in SSH.
+# source scripts/git-env.sh   # or: bash scripts/git-push.sh
