@@ -84,6 +84,17 @@ Sim and does not establish a remote connection itself.
 
 Run the dashboard's host tests with `python3 -m unittest test_tkinter_view`.
 
+## Bounded recovery replay (cube missed grasp)
+
+After a normal sort run, you can classify execution failures and retry **missed cube grasps** in fresh Isaac processes and sibling run directories (`runs/your_run_retry1`, …). This replays from the saved initial scene; it does **not** fix a failure inside the same live simulation session.
+
+```bash
+# From fanuc_er4ia_sim/, with ISAAC set (see SETUP.md):
+bash run_with_recovery.sh runs/your_run
+```
+
+Details, limits, and local tests without Isaac: [`fanuc_er4ia_sim/docs/RECOVERY_POLICY.md`](fanuc_er4ia_sim/docs/RECOVERY_POLICY.md). Host unit tests: `cd fanuc_er4ia_sim && .venv/bin/python -m unittest test_recovery_policy test_recovery_runner test_fake_isaac`.
+
 ## Working in this repository
 
 ```bash

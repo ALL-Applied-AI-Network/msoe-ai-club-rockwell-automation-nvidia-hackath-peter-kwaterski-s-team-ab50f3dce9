@@ -140,7 +140,7 @@ encode_video.py   →  sort_table.mp4, sort_side.mp4
 | **Task success rate** | `execution_report.json` → `task_complete`, counts of verified pickup/placement |
 | **Perception robustness** | `perception_evaluation.json`; notebook **04**; recall lines in planning logs |
 | **Placement quality** | `execution_events.json` → `placement_error_mm`, `placement_yaw_error_deg_mod90`, stack fields |
-| **Recovery rate** | Not automated yet—see **Problem D** below and notebook **08** |
+| **Recovery rate** | `recovery_log.json` / `recovery_policy.py --rate`; see **Problem D** and notebook **08** |
 | **Cycle time** | Frame count × sim timestep, or wall clock on Brev; compare runs via notebook **09** |
 | **Novel object** | New USD in `assets/`, `scene_config.py`, notebook **11** |
 
@@ -194,15 +194,15 @@ Suggested order: **Mixed Sort + counting** → **organize / harder scenes** → 
 
 **Goal:** When `pickup_verified: false`, retry with offset or spread flip without human reset.
 
-**Current behavior:** [`sort_scene.py`](../fanuc_er4ia_sim/sort_scene.py) records `pickup_verified` per pick in `execution_events.json` and may **abort** the cube stack on failed placement. There is **no automatic retry loop** in the starter—this is intentional hackathon extension space.
+**Current behavior:** [`sort_scene.py`](../fanuc_er4ia_sim/sort_scene.py) records `pickup_verified` per pick in `execution_events.json` and aborts the cube stack on failed placement or support. The main pipeline still runs once; bounded retries are **offline replay** in new run folders (not live in-session recovery).
 
-**Safe extension pattern:**
+**Prototype in repo:**
 
-1. Read notebook **08** and `execution_events.json` fields (`objects_lifted`, `grasp_spread_dir`, phase measurements).
-2. Implement retry **above** Isaac execution: re-plan from fresh perception or nudge grasp XY/yaw in `plan_sort.py` / a new `recovery_policy.py`.
-3. Re-run `sort_scene.py --physics-only` only when reusing a valid plan (see `SETUP.md`).
+1. Read notebook **08** and [`docs/RECOVERY_POLICY.md`](../fanuc_er4ia_sim/docs/RECOVERY_POLICY.md).
+2. After a normal pipeline run, `bash fanuc_er4ia_sim/run_with_recovery.sh fanuc_er4ia_sim/runs/your_run` classifies failures and, for **missed cube grasps only**, tries up to two replays (`remeasure` → `flip_spread` → `nudge` ladder) via [`recovery_policy.py`](../fanuc_er4ia_sim/recovery_policy.py).
+3. Host tests (no Isaac): `python3 -m unittest test_recovery_policy test_recovery_runner test_fake_isaac` from `fanuc_er4ia_sim/`.
 
-**Metric:** recovery rate = successful retries / failed first attempts (define clearly in your write-up).
+**Metric:** recovery rate = runs that eventually complete after a first-attempt `missed_grasp` / all such runs (`recovery_policy.py --rate`).
 
 ### E — Finger redesign
 
@@ -215,7 +215,8 @@ Suggested order: **Mixed Sort + counting** → **organize / harder scenes** → 
 
 **Goal:** Notify when a run fails thresholds.
 
-- Parse `execution_report.json` and `perception_evaluation.json` in CI or a small watcher script.
+- [`TkinterView.py`](../TkinterView.py) (repo root) polls run artifacts and surfaces failed pickup/placement/support checks in the alerts table; run `python3 -m unittest test_tkinter_view`.
+- For automation, parse `execution_report.json` and `perception_evaluation.json` in CI or a watcher script.
 - Fail conditions examples: `task_complete == false`, mean position error above X mm, any `pickup_verified == false` with no retry success.
 
 ---

@@ -8,6 +8,7 @@ This minimal starter contains code, instructions, tests and required geometry.
 
 - People: follow [SETUP.md](SETUP.md).
 - Coding agents: read [AGENTS.md](AGENTS.md), then follow the same setup guide.
+- Technical references and change notes: [docs/README.md](docs/README.md).
 - Physical-system calibration: [docs/CALIBRATION_V05.md](docs/CALIBRATION_V05.md).
 - Geometry/perception assumptions: [docs/MODEL_NOTES.md](docs/MODEL_NOTES.md).
 
@@ -33,6 +34,13 @@ replaced by a silver material when the optional photo maps are absent.
 | `sort_scene.py`, `ik.py`, `fk.py` | Physical execution, wrist alignment and success checks |
 | `build_scene.py` | Interactive scene or headless build/render |
 | `run_sort_pipeline.sh` | Capture → perceive → plan → execute → encode |
+
+`recovery_policy.py` contains pure, host-testable failure classification and
+bounded cube-pick retry decisions. `run_with_recovery.sh RUN_DIR` can replay an
+existing planned run in fresh Isaac Sim processes and new run directories. This
+is offline replay from the saved initial scene, not live recovery inside the
+current simulation. See [docs/RECOVERY_POLICY.md](docs/RECOVERY_POLICY.md) for
+behavior, limits, and a local fake-Isaac wiring test.
 
 Cosmos identifies cube locations and colours. A calibrated image-geometry
 front end measures yaw; Cosmos receives that measurement and confirms/reports

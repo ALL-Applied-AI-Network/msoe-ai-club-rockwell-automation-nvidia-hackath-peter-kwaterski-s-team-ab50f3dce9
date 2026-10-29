@@ -1,0 +1,2 @@
+fanuc_er4ia_sim/run_with_recovery.sh text eol=lf
+fanuc_er4ia_sim/fake_isaac/python.sh text eol=lf
