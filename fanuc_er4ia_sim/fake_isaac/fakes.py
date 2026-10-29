@@ -55,6 +55,9 @@ class FakeWorldState:
                        colour=colours.get(name, "red"))
             for name, s in scene_state["objects"].items() if name.startswith("SortCube")
         }
+        # Caps, vials, etc.: kept where the scene put them (the fake only moves cubes).
+        self.static = {name: (np.array(s["position"], float), np.array(s["orientation"], float))
+                       for name, s in scene_state["objects"].items() if not name.startswith("SortCube")}
         self.q = np.zeros(8)
         self.held = None
         self.hold_offset = None
@@ -130,12 +133,11 @@ def install(state):
     class SingleXFormPrim:
         def __init__(self, path):
             self.name = path.split("/")[-1]
-            if self.name not in state.objects:  # caps/vials: keep them static
-                state.objects.setdefault("_static", {})
         def get_world_pose(self):
             o = state.objects.get(self.name)
-            if o is None:
-                return np.zeros(3), yaw_quat(0)
+            if o is None:  # cap, vial or other non-cube object: stays put
+                pos, quat = state.static.get(self.name, (np.zeros(3), yaw_quat(0)))
+                return pos.copy(), quat.copy()
             return o["pos"].copy(), yaw_quat(o["yaw"])
         def set_world_pose(self, pos, quat):
             if self.name in state.objects:
@@ -170,7 +172,6 @@ def install(state):
         sys.modules[name] = m
         return m
 
-    state.objects.pop("_static", None)
     mod("isaacsim", SimulationApp=SimulationApp)
     for name in ("isaacsim.core", "isaacsim.core.utils", "isaacsim.sensors"):
         mod(name)
