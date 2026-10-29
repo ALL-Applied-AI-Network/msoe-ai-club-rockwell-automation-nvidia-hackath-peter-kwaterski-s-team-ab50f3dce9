@@ -366,10 +366,13 @@ def inspect_cube_poses(model, processor, image_path, parsed, run):
         path.with_suffix(".txt").write_text(raw)
         answer = parse_json(raw) or {}
         obj["pose_reason"] = answer.get("reason", "")
+        reported = None
+        conf = None
+        confirmed = False
         try:
             reported = float(answer["yaw_deg"])
             conf = float(answer.get("pose_confidence", 0))
-            valid = (
+            confirmed = (
                 answer.get("category") == "cube"
                 and answer.get("colour") == obj["colour"]
                 and np.isfinite(reported)
@@ -377,33 +380,49 @@ def inspect_cube_poses(model, processor, image_path, parsed, run):
                 and 0.8 <= conf <= 1
                 and abs(square_yaw(reported - yaw)) <= 3
             )
-            if not valid:
-                continue
-            t = np.deg2rad(reported)
-            rot = np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
-            points = [
-                cam.project(
-                    [
-                        *(xy + rot @ np.array([a, -1]) * C.CUBE_EDGE / 2),
-                        cam.table_z + C.CUBE_EDGE,
-                    ]
-                )
-                for a in (-1, 1)
-            ]
-            obj.update(
-                top_edge_endpoints=(np.array(points) / [W, H]).tolist(),
-                pose_confidence=conf,
-                cosmos_reported_yaw_deg=reported,
-                pose_world=dict(
-                    position_m=measurement["position_world_m"],
-                    yaw_deg=square_yaw(reported),
-                    roll_deg=0,
-                    pitch_deg=0,
-                    yaw_symmetry_deg=90,
-                ),
-            )
         except (KeyError, TypeError, ValueError):
-            continue
+            pass
+
+        # Geometry is the pose authority. The first Cosmos pass already
+        # identified this object as a cube of this colour; a malformed or
+        # inconsistent second response must not erase a high-quality calibrated
+        # image measurement.
+        t = np.deg2rad(yaw)
+        rot = np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
+        points = [
+            cam.project(
+                [
+                    *(xy + rot @ np.array([a, -1]) * C.CUBE_EDGE / 2),
+                    cam.table_z + C.CUBE_EDGE,
+                ]
+            )
+            for a in (-1, 1)
+        ]
+        pose_confidence = float(conf) if confirmed else min(0.95, float(quality))
+        update = dict(
+            top_edge_endpoints=(np.array(points) / [W, H]).tolist(),
+            pose_confidence=pose_confidence,
+            pose_validation=(
+                "cosmos_confirmed_calibrated_image_pose"
+                if confirmed
+                else "calibrated_image_pose_fallback"
+            ),
+            pose_world=dict(
+                position_m=measurement["position_world_m"],
+                yaw_deg=square_yaw(yaw),
+                roll_deg=0,
+                pitch_deg=0,
+                yaw_symmetry_deg=90,
+            ),
+        )
+        if confirmed:
+            update["cosmos_reported_yaw_deg"] = reported
+        else:
+            fallback = "Used high-quality calibrated image pose; Cosmos confirmation was unusable"
+            update["pose_reason"] = (
+                f"{obj['pose_reason']}; {fallback}" if obj["pose_reason"] else fallback
+            )
+        obj.update(update)
     return parsed
 
 

@@ -19,37 +19,37 @@
       "image_pose_measurement": {
         "expected_colour": "blue",
         "position_world_m": [
-          0.45715612703059316,
-          -0.09893335556449523,
+          0.45717982416421343,
+          -0.09896919764401683,
           0.8999
         ],
-        "yaw_deg": -35.2693,
+        "yaw_deg": -35.9851,
         "roll_deg": 0,
         "pitch_deg": 0,
-        "silhouette_iou": 0.9589189189189189,
+        "silhouette_iou": 0.9600431965442765,
         "source": "calibrated_image_silhouette_fit",
         "yaw_symmetry_deg": 90
       },
       "pose_confidence": 0.9,
       "top_edge_endpoints": [
         [
-          0.4457503120485009,
-          0.7537679511765314
+          0.4457829359981201,
+          0.7537801548170662
         ],
         [
-          0.4415779534733115,
-          0.7625398043966286
+          0.44154884159209346,
+          0.7624674883643228
         ]
       ],
       "pose_reason": "visible cube geometry and colour",
-      "cosmos_reported_yaw_deg": -35.2693,
+      "cosmos_reported_yaw_deg": -35.9851,
       "pose_world": {
         "position_m": [
-          0.45715612703059316,
-          -0.09893335556449523,
+          0.45717982416421343,
+          -0.09896919764401683,
           0.8999
         ],
-        "yaw_deg": -35.2693,
+        "yaw_deg": -35.9851,
         "roll_deg": 0,
         "pitch_deg": 0,
         "yaw_symmetry_deg": 90
@@ -74,34 +74,34 @@
       "image_pose_measurement": {
         "expected_colour": "blue",
         "position_world_m": [
-          0.26692518919817154,
-          0.02600290535099954,
+          0.26692314837334685,
+          0.0260040483335765,
           0.8999
         ],
-        "yaw_deg": 13.3291,
+        "yaw_deg": 13.304,
         "roll_deg": 0,
         "pitch_deg": 0,
-        "silhouette_iou": 0.9652777777777778,
+        "silhouette_iou": 0.9666666666666667,
         "source": "calibrated_image_silhouette_fit",
         "yaw_symmetry_deg": 90
       },
       "pose_confidence": 0.9,
       "top_edge_endpoints": [
         [
-          0.5222116952897529,
-          0.5781783049427716
+          0.5222123326817733,
+          0.5781766170124042
         ],
         [
-          0.5235541155393894,
-          0.5865756383592984
+          0.5235547550982397,
+          0.5865739286388186
         ]
       ],
       "pose_reason": "visible cube geometry and colour",
       "cosmos_reported_yaw_deg": 13.3,
       "pose_world": {
         "position_m": [
-          0.26692518919817154,
-          0.02600290535099954,
+          0.26692314837334685,
+          0.0260040483335765,
           0.8999
         ],
         "yaw_deg": 13.299999999999997,
@@ -129,11 +129,11 @@
       "image_pose_measurement": {
         "expected_colour": "yellow",
         "position_world_m": [
-          0.3658888798759435,
-          0.07268298029950694,
+          0.36588994807503655,
+          0.07268622127707983,
           0.8999
         ],
-        "yaw_deg": -1.9581,
+        "yaw_deg": -1.8502,
         "roll_deg": 0,
         "pitch_deg": 0,
         "silhouette_iou": 0.9692307692307692,
@@ -143,23 +143,23 @@
       "pose_confidence": 0.9,
       "top_edge_endpoints": [
         [
-          0.5513764936699982,
-          0.6682843664878836
+          0.5513727338606286,
+          0.6682940968369304
         ],
         [
-          0.5514099270486403,
-          0.6779881963527851
+          0.5514177590078246,
+          0.6779994297858976
         ]
       ],
       "pose_reason": "visible cube geometry and colour",
-      "cosmos_reported_yaw_deg": -1.96,
+      "cosmos_reported_yaw_deg": -1.85,
       "pose_world": {
         "position_m": [
-          0.3658888798759435,
-          0.07268298029950694,
+          0.36588994807503655,
+          0.07268622127707983,
           0.8999
         ],
-        "yaw_deg": -1.9600000000000009,
+        "yaw_deg": -1.8500000000000014,
         "roll_deg": 0,
         "pitch_deg": 0,
         "yaw_symmetry_deg": 90
@@ -239,34 +239,34 @@
       "image_pose_measurement": {
         "expected_colour": "red",
         "position_world_m": [
-          0.2608683344024619,
-          0.1994938100772533,
+          0.26086843309319663,
+          0.1994961803332916,
           0.8999
         ],
-        "yaw_deg": -22.8838,
+        "yaw_deg": -22.8801,
         "roll_deg": 0,
         "pitch_deg": 0,
-        "silhouette_iou": 0.9688427299703264,
+        "silhouette_iou": 0.9702823179791976,
         "source": "calibrated_image_silhouette_fit",
         "yaw_symmetry_deg": 90
       },
-      "pose_confidence": 0.9,
+      "pose_confidence": 0.97,
       "top_edge_endpoints": [
         [
-          0.6210081159521316,
-          0.5774028068720984
+          0.621009441880153,
+          0.5774029795560239
         ],
         [
-          0.6194465628707255,
-          0.5850386322156054
+          0.6194478967053979,
+          0.5850388060055307
         ]
       ],
-      "pose_reason": "visible cube geometry and colour",
+      "pose_reason": "The cube is red and appears to be resting upright on the table with a slight rotation.",
       "cosmos_reported_yaw_deg": -22.88,
       "pose_world": {
         "position_m": [
-          0.2608683344024619,
-          0.1994938100772533,
+          0.26086843309319663,
+          0.1994961803332916,
           0.8999
         ],
         "yaw_deg": -22.88,
@@ -305,7 +305,7 @@
         "source": "calibrated_image_silhouette_fit",
         "yaw_symmetry_deg": 90
       },
-      "pose_confidence": 0.9,
+      "pose_confidence": 0.99,
       "top_edge_endpoints": [
         [
           0.628592195684649,
@@ -316,7 +316,7 @@
           0.6775689872590929
         ]
       ],
-      "pose_reason": "visible cube geometry and colour",
+      "pose_reason": "The cube is red and sits on the table with its top face tilted at an angle consistent with the measured yaw.",
       "cosmos_reported_yaw_deg": 35.45,
       "pose_world": {
         "position_m": [

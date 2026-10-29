@@ -1,1 +1,1 @@
-{"category": "cube", "colour": "yellow", "yaw_deg": -1.96, "pose_confidence": 0.9, "reason": "visible cube geometry and colour"}
+{"category": "cube", "colour": "yellow", "yaw_deg": -1.85, "pose_confidence": 0.9, "reason": "visible cube geometry and colour"}
