@@ -264,11 +264,34 @@ class DigitalTwinSource:
 
 
 class RemoteStatusSource:
-    """HTTP adapter for a twin_stream_server on the GPU host (use SSH port forward)."""
+    """Mutual TLS viewer, or loopback HTTP through an existing SSH tunnel."""
 
-    def __init__(self, base_url: str, *, timeout: float = 2.0):
+    def __init__(self, base_url: str, *, timeout: float = 2.0, ca=None, cert=None, key=None):
+        from urllib.parse import urlsplit
+        from twin_tls import is_loopback, secure_opener, tls_context
+
+        url = urlsplit(base_url)
+        if (url.scheme not in ("http", "https") or not url.hostname
+                or url.username is not None or url.password is not None
+                or url.query or url.fragment or url.path not in ("", "/")):
+            raise ValueError("Use an http(s)://host:port base URL without credentials, path, query or fragment")
+        self.secure = url.scheme == "https"
+        self.opener = None
+        if self.secure:
+            self.opener = secure_opener(tls_context(server=False, ca=ca, cert=cert, key=key))
+        elif any((ca, cert, key)):
+            raise ValueError("TLS credentials require an https:// URL")
+        elif not is_loopback(url.hostname):
+            raise ValueError("Remote HTTP is unencrypted; use mutual TLS or a loopback SSH tunnel")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+
+    def _open(self, path):
+        import urllib.request
+
+        if self.opener is not None:
+            return self.opener.open(f"{self.base_url}{path}", timeout=self.timeout)
+        return urllib.request.urlopen(f"{self.base_url}{path}", timeout=self.timeout)
 
     def read_status(self) -> ViewStatus:
         import urllib.error
@@ -277,9 +300,7 @@ class RemoteStatusSource:
         from dashboard_status import status_from_dict
 
         try:
-            with urllib.request.urlopen(
-                f"{self.base_url}/status", timeout=self.timeout
-            ) as response:
+            with self._open("/status") as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.URLError as exc:
             raise ConnectionError(f"Remote status unavailable: {exc}") from exc
@@ -288,15 +309,14 @@ class RemoteStatusSource:
         status = status_from_dict(payload)
         status.source = self.base_url
         try:
-            with urllib.request.urlopen(
-                f"{self.base_url}/frame", timeout=self.timeout
-            ) as response:
+            with self._open("/frame") as response:
                 status.frame_image = response.read()
         except urllib.error.HTTPError as exc:
             if exc.code != 404:
                 raise ConnectionError(f"Remote frame unavailable: {exc}") from exc
-        except urllib.error.URLError:
-            pass
+        except urllib.error.URLError as exc:
+            if self.secure:
+                raise ConnectionError(f"Secure frame connection failed: {exc}") from exc
         return status
 
 
@@ -382,6 +402,8 @@ class SortingView:
         ttk.Label(frame, textvariable=self.run_text, justify="left", wraplength=1000).pack(anchor="w", pady=12)
         self.fresh_text = tk.StringVar(value="No source read yet")
         ttk.Label(frame, textvariable=self.fresh_text, wraplength=1000).pack(anchor="w", pady=(0, 12))
+        self.connection_text = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.connection_text, wraplength=1000).pack(anchor="w", pady=(0, 8))
 
         ttk.Label(frame, text="Inventory and verified outcomes", style="Section.TLabel").pack(anchor="w")
         ttk.Label(frame, text="Sorted counts require all reported placement checks to pass. Attempts appear after each pick.").pack(
@@ -524,6 +546,7 @@ class SortingView:
             self.detail.set("Select an alert to read its full reason.")
 
     def update_freshness(self):
+        self.update_connection_status()
         if self.error:
             message = "Source error — retaining last snapshot: " if self.snapshot else "Source error — waiting for valid output: "
             self.fresh_text.set(message + self.error)
@@ -543,6 +566,22 @@ class SortingView:
             state += " • source read delayed"
         self.fresh_text.set(f"Freshness: {state} | {age_text} | last successful read {read_age:.0f}s ago")
 
+    def update_connection_status(self):
+        if not isinstance(self.source, RemoteStatusSource):
+            self.connection_text.set("Local source — no network transmission")
+            return
+        if self.source.secure:
+            if self.error:
+                text = "Secure connection unavailable or rejected — any retained image is from an earlier read"
+            elif self.last_received is None:
+                text = "Mutual TLS — waiting for an authenticated connection"
+            elif time.monotonic() - self.last_received > 3:
+                text = "Mutual TLS — authenticated read delayed; connection not currently confirmed"
+            else:
+                text = "Mutual TLS 1.3 — server verified; client certificate accepted on last read"
+        else:
+            text = "Loopback HTTP — encryption depends on your SSH tunnel; the dashboard cannot verify it"
+        self.connection_text.set(text)
 
 
     def show_alert(self, _event=None):
@@ -563,16 +602,24 @@ def main(argv=None):
     selection.add_argument("--run", type=Path, help="Follow one pipeline run directory, even before it exists")
     selection.add_argument(
         "--url",
-        help="Poll a twin_stream_server base URL (e.g. http://127.0.0.1:8765 via SSH tunnel)",
+        help="Poll https://sender:8765 with mutual TLS, or http://127.0.0.1:8765 via SSH tunnel",
     )
     selection.add_argument("--demo", action="store_true", help="Show explicitly fictional example data")
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR,
                         help="Follow the most recently modified run directory here when --run is omitted")
+    parser.add_argument("--tls-ca", type=Path, help="CA certificate trusted to issue the sender certificate")
+    parser.add_argument("--tls-cert", type=Path, help="Viewer client certificate")
+    parser.add_argument("--tls-key", type=Path, help="Viewer private key")
     args = parser.parse_args(argv)
+    if any((args.tls_ca, args.tls_cert, args.tls_key)) and not args.url:
+        parser.error("TLS credentials require --url https://...")
     if args.demo:
         source = DemoSource()
     elif args.url:
-        source = RemoteStatusSource(args.url)
+        try:
+            source = RemoteStatusSource(args.url, ca=args.tls_ca, cert=args.tls_cert, key=args.tls_key)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     else:
         source = DigitalTwinSource(args.run, args.runs_dir)
     try:

@@ -107,6 +107,14 @@ ssh -L 8765:127.0.0.1:8765 user@your-brev-host
 python3 TkinterView.py --url http://127.0.0.1:8765
 ```
 
+For direct encrypted camera/status transmission, the server and dashboard support
+**mutual TLS 1.3** with certificates for both sender and viewer. See
+[`fanuc_er4ia_sim/docs/SECURE_STREAM.md`](fanuc_er4ia_sim/docs/SECURE_STREAM.md)
+for certificate generation, HTTPS commands, pipeline configuration and rejection
+tests. Direct non-loopback HTTP is refused; loopback HTTP remains available for
+the SSH workflow above. This secures simulated data in transit without changing
+camera, perception or motion behavior.
+
 Step state is written to `step_state.json` in the run folder. After a failed
 grasp, the simulator captures `mid_step_capture.png` and calls
 `live_step_recovery.py` on the host (requires `HOST_PYTHON` and the host

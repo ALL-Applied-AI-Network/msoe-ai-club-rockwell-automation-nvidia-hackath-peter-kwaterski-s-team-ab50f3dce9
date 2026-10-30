@@ -12,6 +12,16 @@ ISAAC="${ISAAC:-/isaacsim}"
 HOST_PYTHON="${HOST_PYTHON:-$HERE/.venv/bin/python}"
 export HOST_PYTHON
 STREAM_PORT="${TWIN_STREAM_PORT:-8765}"
+STREAM_HOST="${TWIN_STREAM_HOST:-127.0.0.1}"
+STREAM_TLS_ARGS=()
+STREAM_SCHEME=http
+if [ -n "${TWIN_TLS_CA:-}${TWIN_TLS_CERT:-}${TWIN_TLS_KEY:-}" ]; then
+    : "${TWIN_TLS_CA:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
+    : "${TWIN_TLS_CERT:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
+    : "${TWIN_TLS_KEY:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
+    STREAM_TLS_ARGS=(--tls-ca "$TWIN_TLS_CA" --tls-cert "$TWIN_TLS_CERT" --tls-key "$TWIN_TLS_KEY")
+    STREAM_SCHEME=https
+fi
 RUN="${1:-$HERE/runs/cube_stack_step_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "$RUN"
 RUN="$(cd "$RUN" && pwd)"
@@ -19,7 +29,9 @@ if [ -n "$(ls -A "$RUN")" ]; then
     echo "Use an empty run directory: $RUN" >&2
     exit 1
 fi
-"$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --port "$STREAM_PORT" &
+# Validate keys, trust configuration and binding before starting expensive stages.
+"$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" --check-config
+"$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" &
 STREAM_PID=$!
 cleanup() {
     kill "$STREAM_PID" 2>/dev/null || true
@@ -41,4 +53,8 @@ if not result.get('task_complete'):
 PY
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/frames" --out "$RUN/sort_table.mp4" --fps 30
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/side_frames" --out "$RUN/sort_side.mp4" --fps 30
-echo "Review $RUN — stream dashboard: python3 TkinterView.py --url http://127.0.0.1:$STREAM_PORT (via SSH tunnel from laptop)"
+if [ "$STREAM_SCHEME" = https ]; then
+    echo "Review $RUN — connect TkinterView.py to https://<certificate-host>:$STREAM_PORT with the viewer's --tls-ca, --tls-cert and --tls-key (see docs/SECURE_STREAM.md)."
+else
+    echo "Review $RUN — stream dashboard: python3 TkinterView.py --url http://127.0.0.1:$STREAM_PORT (via SSH tunnel from laptop)"
+fi

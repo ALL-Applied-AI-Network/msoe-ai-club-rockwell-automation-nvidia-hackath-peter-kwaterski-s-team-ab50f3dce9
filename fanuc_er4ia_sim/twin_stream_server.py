@@ -1,9 +1,11 @@
-"""Read-only HTTP adapter for live digital-twin run folders."""
+"""Read-only camera/status adapter with optional mutual TLS (required off loopback)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import socket
+import ssl
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from dashboard_status import read_dashboard_status, status_to_dict  # noqa: E402
 from run_artifacts import read_json  # noqa: E402
+from twin_tls import is_loopback, tls_context  # noqa: E402
 
 
 class TwinStreamHandler(BaseHTTPRequestHandler):
@@ -72,13 +75,46 @@ class TwinStreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-def serve(run_dir: Path, host: str, port: int) -> None:
+class TwinStreamServer(ThreadingHTTPServer):
+    """Perform bounded TLS handshakes in workers, without blocking new viewers."""
+
+    def __init__(self, address, handler, *, context=None):
+        self.context = context
+        if ":" in address[0]:
+            self.address_family = socket.AF_INET6
+        super().__init__(address, handler)
+
+    def finish_request(self, request, client_address):
+        if self.context is None:
+            return super().finish_request(request, client_address)
+        request.settimeout(3.0)
+        try:
+            connection = self.context.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError):
+            # Missing/untrusted client certificates never reach the HTTP handler.
+            return
+        with connection:
+            super().finish_request(connection, client_address)
+
+
+def create_server(run_dir: Path, host: str, port: int, *, ca=None, cert=None, key=None):
+    context = None
+    if any((ca, cert, key)):
+        context = tls_context(server=True, ca=ca, cert=cert, key=key)
+    elif not is_loopback(host):
+        raise ValueError("Non-loopback access requires mutual TLS; configure --tls-ca, --tls-cert and --tls-key")
     run_dir = Path(run_dir).expanduser().resolve()
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
-    TwinStreamHandler.run_dir = run_dir
-    server = ThreadingHTTPServer((host, port), TwinStreamHandler)
-    print(f"[twin-stream] serving {run_dir} at http://{host}:{port}/", flush=True)
+    handler = type("RunHandler", (TwinStreamHandler,), {"run_dir": run_dir})
+    return TwinStreamServer((host, port), handler, context=context)
+
+
+def serve(run_dir: Path, host: str, port: int, *, ca=None, cert=None, key=None) -> None:
+    server = create_server(run_dir, host, port, ca=ca, cert=cert, key=key)
+    scheme = "https" if server.context else "http"
+    security = "mutual TLS 1.3" if server.context else "loopback only; use SSH for remote viewing"
+    print(f"[twin-stream] serving {run_dir} at {scheme}://{host}:{port}/ ({security})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -92,8 +128,19 @@ def main(argv=None):
     parser.add_argument("--run", type=Path, required=True, help="pipeline run directory")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--tls-ca", type=Path, help="CA certificate trusted to issue viewer certificates")
+    parser.add_argument("--tls-cert", type=Path, help="Sender certificate with a matching DNS/IP subjectAltName")
+    parser.add_argument("--tls-key", type=Path, help="Sender private key")
+    parser.add_argument("--check-config", action="store_true", help="Validate certificates and binding, then exit")
     args = parser.parse_args(argv)
-    serve(args.run, args.host, args.port)
+    options = dict(ca=args.tls_ca, cert=args.tls_cert, key=args.tls_key)
+    try:
+        if args.check_config:
+            create_server(args.run, args.host, args.port, **options).server_close()
+        else:
+            serve(args.run, args.host, args.port, **options)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     return 0
 
 
