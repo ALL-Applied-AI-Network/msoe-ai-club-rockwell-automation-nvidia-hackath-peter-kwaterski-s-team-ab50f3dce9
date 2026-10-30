@@ -129,6 +129,10 @@ then remain bound to its default `127.0.0.1`.
   untrusted issuers and hostname mismatches are rejected. Fix the certificates
   or URL; do not bypass verification.
 - Local-file and fictional-demo dashboard modes need no certificates.
+- When a run finishes, the sender exposes ``GET /bundle.zip`` (review artifacts as
+  a zip, excluding raw ``frames/`` and ``side_frames/``). A remote dashboard
+  connected with ``--url`` downloads it automatically into the viewer's
+  Downloads folder once ``execution_report.json`` is present.
 - Disk images, JSON artifacts and the dashboard's existing temporary display
   image are outside transport encryption. A camera-to-sender cable is also
   outside this protected network segment.

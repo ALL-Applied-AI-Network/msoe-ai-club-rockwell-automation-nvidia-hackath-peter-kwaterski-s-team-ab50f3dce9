@@ -43,6 +43,7 @@ def status_from_dict(payload: Dict[str, Any]) -> ViewStatus:
         current_step=payload.get("current_step"),
         frame_url=payload.get("frame_url"),
         frame_image=None,
+        bundle_url=payload.get("bundle_url"),
     )
 
 

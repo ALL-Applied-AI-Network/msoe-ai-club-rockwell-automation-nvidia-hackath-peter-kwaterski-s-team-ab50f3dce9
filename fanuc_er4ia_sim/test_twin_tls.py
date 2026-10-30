@@ -122,7 +122,7 @@ class MutualTLSTests(unittest.TestCase):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.load_verify_locations(str(self.trusted / "ca.crt"))
         opener = secure_opener(context)
-        for endpoint in ("/health", "/status", "/step_state", "/frame"):
+        for endpoint in ("/health", "/status", "/step_state", "/frame", "/bundle.zip"):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaises((OSError, http.client.HTTPException)):
                     opener.open(self.url + endpoint, timeout=2)

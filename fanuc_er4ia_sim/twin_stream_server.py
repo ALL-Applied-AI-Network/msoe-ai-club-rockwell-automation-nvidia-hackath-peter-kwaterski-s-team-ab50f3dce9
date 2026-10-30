@@ -7,6 +7,7 @@ import json
 import socket
 import ssl
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -18,11 +19,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from dashboard_status import read_dashboard_status, status_to_dict  # noqa: E402
 from run_artifacts import read_json  # noqa: E402
+from run_bundle import bundle_ready, ensure_bundle  # noqa: E402
 from twin_tls import is_loopback, tls_context  # noqa: E402
 
 
 class TwinStreamHandler(BaseHTTPRequestHandler):
     run_dir: Path = Path(".")
+    bundle_lock: threading.Lock = threading.Lock()
 
     def log_message(self, format, *args):  # noqa: A003
         return
@@ -42,6 +45,18 @@ class TwinStreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_file(self, path: Path, content_type: str):
+        path = Path(path)
+        size = path.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        with path.open("rb") as handle:
+            while chunk := handle.read(65536):
+                self.wfile.write(chunk)
+
     def do_GET(self):  # noqa: N802
         path = urlparse(self.path).path
         if path == "/health":
@@ -52,6 +67,8 @@ class TwinStreamHandler(BaseHTTPRequestHandler):
                 status = read_dashboard_status(self.run_dir)
                 payload = status_to_dict(status)
                 payload["frame_url"] = "/frame"
+                if bundle_ready(self.run_dir):
+                    payload["bundle_url"] = "/bundle.zip"
                 self._send_json(payload)
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
@@ -70,6 +87,18 @@ class TwinStreamHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             self._send_bytes(frame_path.read_bytes(), "image/png")
+            return
+        if path == "/bundle.zip":
+            if not bundle_ready(self.run_dir):
+                self._send_json({"error": "Run bundle not ready"}, status=404)
+                return
+            try:
+                with self.bundle_lock:
+                    archive = ensure_bundle(self.run_dir)
+            except OSError as exc:
+                self._send_json({"error": str(exc)}, status=500)
+                return
+            self._send_file(archive, "application/zip")
             return
         self.send_response(404)
         self.end_headers()
@@ -106,7 +135,11 @@ def create_server(run_dir: Path, host: str, port: int, *, ca=None, cert=None, ke
     run_dir = Path(run_dir).expanduser().resolve()
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
-    handler = type("RunHandler", (TwinStreamHandler,), {"run_dir": run_dir})
+    handler = type(
+        "RunHandler",
+        (TwinStreamHandler,),
+        {"run_dir": run_dir, "bundle_lock": threading.Lock()},
+    )
     return TwinStreamServer((host, port), handler, context=context)
 
 

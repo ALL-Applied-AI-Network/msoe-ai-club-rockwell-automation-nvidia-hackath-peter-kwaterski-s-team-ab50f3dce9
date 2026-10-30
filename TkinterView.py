@@ -22,6 +22,17 @@ COUNT_FIELDS = ("detected", "eligible", "attempted", "sorted", "skipped", "faile
 CATEGORIES = {"cube": "Cubes", "cap": "Caps", "vial": "Tubes"}
 EXECUTION_CHECKS = ("pickup_verified", "placement_verified", "placement_pose_verified", "stack_support_verified")
 DEFAULT_RUNS_DIR = Path(__file__).resolve().parent / "fanuc_er4ia_sim" / "runs"
+BUNDLE_DOWNLOAD_TIMEOUT_S = 600.0
+
+
+def downloads_directory() -> Path:
+    """Best-effort location for saved run bundles on the viewing machine."""
+    home = Path.home()
+    for name in ("Downloads", "downloads"):
+        candidate = home / name
+        if candidate.is_dir():
+            return candidate
+    return home
 
 
 @dataclass
@@ -52,6 +63,7 @@ class ViewStatus:
     current_step: Optional[str] = None
     frame_url: Optional[str] = None
     frame_image: Optional[bytes] = field(default=None, repr=False)
+    bundle_url: Optional[str] = None
 
 
 
@@ -266,7 +278,16 @@ class DigitalTwinSource:
 class RemoteStatusSource:
     """Mutual TLS viewer, or loopback HTTP through an existing SSH tunnel."""
 
-    def __init__(self, base_url: str, *, timeout: float = 2.0, ca=None, cert=None, key=None):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 2.0,
+        download_timeout: float = BUNDLE_DOWNLOAD_TIMEOUT_S,
+        ca=None,
+        cert=None,
+        key=None,
+    ):
         from urllib.parse import urlsplit
         from twin_tls import is_loopback, secure_opener, tls_context
 
@@ -285,13 +306,15 @@ class RemoteStatusSource:
             raise ValueError("Remote HTTP is unencrypted; use mutual TLS or a loopback SSH tunnel")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.download_timeout = download_timeout
 
-    def _open(self, path):
+    def _open(self, path, *, timeout=None):
         import urllib.request
 
+        wait = self.timeout if timeout is None else timeout
         if self.opener is not None:
-            return self.opener.open(f"{self.base_url}{path}", timeout=self.timeout)
-        return urllib.request.urlopen(f"{self.base_url}{path}", timeout=self.timeout)
+            return self.opener.open(f"{self.base_url}{path}", timeout=wait)
+        return urllib.request.urlopen(f"{self.base_url}{path}", timeout=wait)
 
     def read_status(self) -> ViewStatus:
         import urllib.error
@@ -318,6 +341,28 @@ class RemoteStatusSource:
             if self.secure:
                 raise ConnectionError(f"Secure frame connection failed: {exc}") from exc
         return status
+
+    def download_bundle(self, destination: Path) -> Path:
+        """Fetch ``/bundle.zip`` from the sender into ``destination``."""
+        import shutil
+        import tempfile
+        import urllib.error
+
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self._open("/bundle.zip", timeout=self.download_timeout) as response:
+                with tempfile.NamedTemporaryFile(
+                    dir=destination.parent, prefix=f".{destination.name}.", suffix=".part", delete=False
+                ) as handle:
+                    shutil.copyfileobj(response, handle)
+                    partial = Path(handle.name)
+        except urllib.error.HTTPError as exc:
+            raise ConnectionError(f"Run bundle unavailable: HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ConnectionError(f"Run bundle download failed: {exc}") from exc
+        partial.replace(destination)
+        return destination
 
 
 class DemoSource:
@@ -376,6 +421,8 @@ class SortingView:
         self.alert_rows = {}  # Scoped to the run; repeated IDs update existing rows.
 
         self.run_id = None
+        self._bundle_saved_runs = set()
+        self._bundle_download_in_progress = False
         root.title("Robotic sorting | FANUC digital twin")
         root.geometry("1120x760")
         root.minsize(900, 650)
@@ -404,6 +451,8 @@ class SortingView:
         ttk.Label(frame, textvariable=self.fresh_text, wraplength=1000).pack(anchor="w", pady=(0, 12))
         self.connection_text = tk.StringVar(value="")
         ttk.Label(frame, textvariable=self.connection_text, wraplength=1000).pack(anchor="w", pady=(0, 8))
+        self.bundle_text = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.bundle_text, wraplength=1000).pack(anchor="w", pady=(0, 8))
 
         ttk.Label(frame, text="Inventory and verified outcomes", style="Section.TLabel").pack(anchor="w")
         ttk.Label(frame, text="Sorted counts require all reported placement checks to pass. Attempts appear after each pick.").pack(
@@ -478,6 +527,7 @@ class SortingView:
                 self.last_received = time.monotonic()
                 self.snapshot = status
                 self.render(status)
+                self.maybe_download_bundle(status)
         except queue.Empty:
             pass
 
@@ -530,6 +580,10 @@ class SortingView:
             self.alert_rows.clear()
             self.detail.set("Select an alert to read its full reason.")
             self.run_id = run_key
+            if not isinstance(self.source, RemoteStatusSource):
+                self.bundle_text.set("")
+            elif status.run_id not in self._bundle_saved_runs:
+                self.bundle_text.set("")
         current_ids = {alert.id for alert in status.alerts}
         for identifier in list(self.alert_rows):
             if identifier not in current_ids:
@@ -582,6 +636,34 @@ class SortingView:
         else:
             text = "Loopback HTTP — encryption depends on your SSH tunnel; the dashboard cannot verify it"
         self.connection_text.set(text)
+
+    def maybe_download_bundle(self, status: ViewStatus):
+        if not isinstance(self.source, RemoteStatusSource):
+            return
+        if not status.finished or not status.bundle_url:
+            return
+        if status.run_id in self._bundle_saved_runs or self._bundle_download_in_progress:
+            return
+        self._bundle_download_in_progress = True
+        self.bundle_text.set(f"Downloading run bundle for {status.run_id}…")
+        threading.Thread(
+            target=self._download_bundle_worker,
+            args=(status.run_id,),
+            daemon=True,
+        ).start()
+
+    def _download_bundle_worker(self, run_id: str):
+        destination = downloads_directory() / f"{run_id}.zip"
+        try:
+            self.source.download_bundle(destination)
+        except Exception as exc:
+            message = f"Run bundle download failed: {exc}"
+        else:
+            self._bundle_saved_runs.add(run_id)
+            message = f"Run bundle saved to {destination}"
+        finally:
+            self._bundle_download_in_progress = False
+        self.root.after(0, lambda: self.bundle_text.set(message))
 
 
     def show_alert(self, _event=None):

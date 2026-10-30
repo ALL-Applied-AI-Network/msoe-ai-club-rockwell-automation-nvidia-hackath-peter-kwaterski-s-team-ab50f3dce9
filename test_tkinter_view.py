@@ -14,6 +14,7 @@ from TkinterView import (
     DigitalTwinSource,
     RemoteStatusSource,
     SortingView,
+    downloads_directory,
 )
 
 
@@ -238,7 +239,7 @@ class RemoteStatusSourceTests(unittest.TestCase):
             def __init__(self, body):
                 self._body = body
 
-            def read(self):
+            def read(self, amt=-1):
                 return self._body
 
             def __enter__(self):
@@ -256,6 +257,33 @@ class RemoteStatusSourceTests(unittest.TestCase):
         self.assertEqual(status.controller_phase, "executing")
         self.assertEqual(status.frame_image, b"\x89PNG\r\n\x1a\n")
 
+    @patch("urllib.request.urlopen")
+    def test_download_bundle_writes_destination(self, urlopen):
+        class Response:
+            def __init__(self, body):
+                self._remaining = body
+
+            def read(self, amt=-1):
+                if not self._remaining:
+                    return b""
+                chunk, self._remaining = self._remaining, b""
+                return chunk
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        urlopen.return_value = Response(b"PK\x03\x04")
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "stack_01.zip"
+            path = RemoteStatusSource("http://127.0.0.1:8765").download_bundle(destination)
+            self.assertEqual(path, destination)
+            self.assertEqual(destination.read_bytes(), b"PK\x03\x04")
+            urlopen.assert_called_once()
+            self.assertIn("/bundle.zip", urlopen.call_args[0][0])
+
 
 class PollingTests(unittest.TestCase):
     def view(self):
@@ -267,6 +295,7 @@ class PollingTests(unittest.TestCase):
         view.error = None
         view.render = Mock()
         view.update_freshness = Mock()
+        view.maybe_download_bundle = Mock()
         return view
 
     def test_successful_read_keeps_polling(self):
@@ -294,6 +323,11 @@ class PollingTests(unittest.TestCase):
         view.drain_events()
         view.update_freshness.assert_called_once()
         view.root.after.assert_called_once_with(100, view.drain_events)
+
+    def test_downloads_directory_is_under_home(self):
+        path = downloads_directory()
+        self.assertTrue(path.is_dir())
+        self.assertIn(path, (Path.home(), Path.home() / "Downloads", Path.home() / "downloads"))
 
 
 if __name__ == "__main__":

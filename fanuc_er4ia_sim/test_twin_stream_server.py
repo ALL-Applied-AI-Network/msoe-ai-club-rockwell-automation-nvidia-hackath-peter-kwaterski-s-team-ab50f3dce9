@@ -48,6 +48,37 @@ class TwinStreamServerTests(unittest.TestCase):
             state = json.loads(resp.read().decode("utf-8"))
         self.assertEqual(state["phase"], "executing")
 
+    def test_bundle_zip_after_final_report(self):
+        import urllib.request
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/status") as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        self.assertIsNone(payload.get("bundle_url"))
+        atomic_write_json(
+            self.run / "execution_report.json",
+            {
+                "picks": [
+                    {
+                        "detection_id": 0,
+                        "category": "cube",
+                        "tracked_object": "SortCube0",
+                        "pickup_verified": True,
+                        "placement_verified": False,
+                    }
+                ],
+                "task_complete": False,
+                "abort_reason": "test abort",
+            },
+        )
+        (self.run / "review.txt").write_text("artifacts", encoding="utf-8")
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/status") as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        self.assertEqual(payload["bundle_url"], "/bundle.zip")
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/bundle.zip") as resp:
+            body = resp.read()
+        self.assertTrue(body.startswith(b"PK"))
+        self.assertTrue((self.run / "run_bundle.zip").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
