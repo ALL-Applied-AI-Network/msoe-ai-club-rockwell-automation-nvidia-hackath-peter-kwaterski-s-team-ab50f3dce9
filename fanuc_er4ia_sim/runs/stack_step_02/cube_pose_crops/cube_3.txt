@@ -1,1 +1,0 @@
-{"category": "cube", "colour": "yellow", "yaw_deg": 28.0, "pose_confidence": 0.99, "reason": "The cube is yellow and sits on the table with its top face tilted slightly to the right, matching the measured yaw angle."}

@@ -1,1 +1,0 @@
-{"category": "cube", "colour": "red", "yaw_deg": -23.1766, "pose_confidence": 0.97, "reason": "The cube is red and its top face is visible, confirming the expected colour and tabletop pose."}

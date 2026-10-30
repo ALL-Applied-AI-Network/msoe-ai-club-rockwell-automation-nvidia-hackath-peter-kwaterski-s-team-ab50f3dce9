@@ -1,1 +1,0 @@
-{"category":"cube","colour":"blue","yaw_deg":13.3,"pose_confidence":0.9,"reason":"visible cube geometry and colour"}
