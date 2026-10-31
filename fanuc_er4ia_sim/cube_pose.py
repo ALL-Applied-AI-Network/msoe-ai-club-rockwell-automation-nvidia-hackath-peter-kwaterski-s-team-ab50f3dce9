@@ -64,10 +64,20 @@ def silhouette(cam, xy, yaw, shape, origin=(0, 0)):
 def refine_pose(img, cam, obj, xy, yaw, search_half_width=20):
     """Bounded silhouette fit around VLM pose; neither config poses nor GT used."""
     H, W = img.shape[:2]
-    u, v = cam.project([*xy, cam.table_z + C.CUBE_EDGE / 2])
+    if (cam.W, cam.H) != (W, H):
+        return xy, yaw, 0.0
+    projected = cam.project([*xy, cam.table_z + C.CUBE_EDGE / 2])
+    if projected is None:
+        return xy, yaw, 0.0
+    u, v = projected
     radius = round(40 * W / 1920)
     x0, y0 = max(0, int(u) - radius), max(0, int(v) - radius)
-    crop = img[y0 : min(H, int(v) + radius + 1), x0 : min(W, int(u) + radius + 1)]
+    x1, y1 = min(W, int(u) + radius + 1), min(H, int(v) + radius + 1)
+    if x1 <= x0 or y1 <= y0:
+        return xy, yaw, 0.0
+    crop = img[y0:y1, x0:x1]
+    if crop.size == 0:
+        return xy, yaw, 0.0
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     h = hsv[:, :, 0]
     s = hsv[:, :, 1]

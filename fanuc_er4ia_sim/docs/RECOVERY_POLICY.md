@@ -21,8 +21,28 @@ calls `live_step_recovery.py` on the host (`HOST_PYTHON` must point at the
 `.venv`). That reuses `decide()` / `apply_action()` from this module. Only
 missed-grasp failures are retried live; placement, support, IK, and uncertain
 states stop the controller. Artifacts: `step_state.json`,
+`mid_step_capture.png`, `mid_step_camera.json` (calibration matching the PNG),
 `live_recovery_decision.json`, and throttled `live_frame.png` for the HTTP
 dashboard adapter.
+
+To **demo live recovery on real Isaac**, inject a one-shot fault on a planned pick
+(first attempt only; live recovery retries with the updated plan):
+
+```bash
+cd fanuc_er4ia_sim
+# Visible accidental drop mid-lift (recommended for demos):
+INJECT_MISSED_GRASP=2:drop bash run_step_pipeline.sh runs/live_recovery_demo_01
+# Or offset the grasp instead of opening the gripper early:
+INJECT_MISSED_GRASP=2:5:0:0 bash run_step_pipeline.sh runs/live_recovery_demo_02
+```
+
+`PICK_INDEX` is zero-based in `sort_plan.json` `picks`. `PICK_INDEX:drop` closes
+on the cube, begins lifting, then opens the gripper during lift/carry so the cube
+falls in the twin. That yields a failed pickup and triggers live missed-grasp
+recovery when `HOST_PYTHON` is set. Offset form shifts the grasp by millimetres
+if a smaller miss is enough in PhysX. The run records `inject_missed_grasp.json`.
+Only the first attempt at that pick is faulted; recovery retries use the updated
+plan.
 
 The tool only automatically retries a classified missed cube grasp. Wrong
 object, unreachable motion, placement/support failure, collision, detected

@@ -640,7 +640,7 @@ class SortingView:
     def maybe_download_bundle(self, status: ViewStatus):
         if not isinstance(self.source, RemoteStatusSource):
             return
-        if not status.finished or not status.bundle_url:
+        if not status.bundle_url:
             return
         if status.run_id in self._bundle_saved_runs or self._bundle_download_in_progress:
             return

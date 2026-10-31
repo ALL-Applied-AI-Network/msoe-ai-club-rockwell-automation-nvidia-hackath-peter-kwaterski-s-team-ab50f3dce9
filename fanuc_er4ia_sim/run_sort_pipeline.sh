@@ -49,4 +49,5 @@ if not result.get('task_complete'):
 PY
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/frames" --out "$RUN/sort_table.mp4" --fps 30
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/side_frames" --out "$RUN/sort_side.mp4" --fps 30
+"$HOST_PYTHON" "$HERE/run_bundle.py" --mark-finalized "$RUN"
 echo "Review $RUN: videos, detections_overlay.png, sort_plan.json, perception_evaluation.json, execution_report.json"

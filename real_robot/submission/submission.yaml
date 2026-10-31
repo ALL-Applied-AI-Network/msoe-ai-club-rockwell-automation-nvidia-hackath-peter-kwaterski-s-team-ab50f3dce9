@@ -1,0 +1,17 @@
+# Your submission. Run: uv run run.py --submit
+
+team: MSOE AI Club / Rockwell-NVIDIA Hackathon
+contact: team lead name, email@example.com
+policy: ScrewSortTCP-v1
+
+model_type: Hybrid
+
+task_id: pick-screws-M
+task: Pick all eight countersunk screws from the table and place them in the yellow bin.
+
+objects: same
+layout: same
+
+rollouts: 10
+
+custom_hardware: none

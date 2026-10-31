@@ -1,0 +1,5 @@
+.venv/
+.request.json
+artifacts/
+__pycache__/
+*.pyc

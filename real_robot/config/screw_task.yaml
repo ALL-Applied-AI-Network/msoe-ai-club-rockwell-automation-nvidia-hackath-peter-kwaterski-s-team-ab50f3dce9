@@ -1,0 +1,29 @@
+# Physical robot: pick all eight default-scene screws into the yellow bin.
+expected_screws: 8
+max_retries_per_screw: 2
+action_dt: 0.15
+hover_z_mm: -280.0
+approach_z_mm: -310.0
+grasp_z_mm: -332.0
+lift_z_mm: -280.0
+bin_hover_z_mm: -260.0
+bin_drop_z_mm: -300.0
+min_confidence: 0.35
+bin_x_mm: 510.0
+bin_y_mm: 110.0
+safe_hover:
+  x: 400.0
+  y: 0.0
+  z: -260.0
+  w: -180.0
+  p: 0.0
+  r: 0.0
+fallback_screws_mm:
+  - [380, -120, 0]
+  - [400, -80, 45]
+  - [420, -40, 90]
+  - [440, 0, 135]
+  - [420, 40, 180]
+  - [400, 80, -135]
+  - [380, 40, -90]
+  - [360, 0, -45]

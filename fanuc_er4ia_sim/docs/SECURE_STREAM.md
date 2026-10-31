@@ -130,9 +130,14 @@ then remain bound to its default `127.0.0.1`.
   or URL; do not bypass verification.
 - Local-file and fictional-demo dashboard modes need no certificates.
 - When a run finishes, the sender exposes ``GET /bundle.zip`` (review artifacts as
-  a zip, excluding raw ``frames/`` and ``side_frames/``). A remote dashboard
-  connected with ``--url`` downloads it automatically into the viewer's
-  Downloads folder once ``execution_report.json`` is present.
+  a zip, excluding raw ``frames/`` and ``side_frames/``) only after
+  ``sort_table.mp4``, ``sort_side.mp4``, and ``run_finalized.json`` are present
+  (written at the end of ``run_step_pipeline.sh`` / ``run_sort_pipeline.sh``).
+  A remote dashboard connected with ``--url`` downloads it automatically into
+  the viewer's Downloads folder once that gate passes. After
+  ``run_step_pipeline.sh`` encodes review videos it pre-builds the zip and keeps
+  the twin stream alive for ``TWIN_STREAM_POST_RUN_SEC`` seconds (default 900)
+  so the laptop can finish downloading before the sender stops.
 - Disk images, JSON artifacts and the dashboard's existing temporary display
   image are outside transport encryption. A camera-to-sender cable is also
   outside this protected network segment.

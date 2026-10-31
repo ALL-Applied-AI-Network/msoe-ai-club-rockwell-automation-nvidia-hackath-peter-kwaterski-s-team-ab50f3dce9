@@ -15,7 +15,9 @@ def _observation(run_dir: Path):
     image_path = run_dir / "mid_step_capture.png"
     if not image_path.is_file():
         image_path = run_dir / "world_camera.png"
-    camera_path = run_dir / "camera.json"
+    camera_path = run_dir / "mid_step_camera.json"
+    if not camera_path.is_file():
+        camera_path = run_dir / "camera.json"
     if not image_path.is_file() or not camera_path.is_file():
         return None, None
     import cv2

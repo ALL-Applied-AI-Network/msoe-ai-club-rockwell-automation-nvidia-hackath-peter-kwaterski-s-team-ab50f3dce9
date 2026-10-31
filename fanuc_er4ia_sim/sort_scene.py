@@ -167,6 +167,20 @@ def capture_table_image(cam, path):
     )
 
 
+def capture_table_snapshot(stage, cam, cam_path, resolution, run_dir: Path):
+    """Save PNG and matching camera.json for host-side remeasurement."""
+    from camera_export import write_isaac_camera_json
+
+    run_dir = Path(run_dir)
+    capture_table_image(cam, run_dir / "mid_step_capture.png")
+    write_isaac_camera_json(
+        stage,
+        cam_path,
+        resolution,
+        run_dir / "mid_step_camera.json",
+    )
+
+
 def execute_one_pick(
     pick,
     *,
@@ -196,7 +210,10 @@ def execute_one_pick(
     live_frame=None,
 ):
     """Run one planned grasp; return event, updated q/frame, and optional abort reason."""
+    from grasp_fault import INJECT_ACCIDENTAL_DROP
+
     pick = dict(pick)
+    inject_drop = bool(pick.pop(INJECT_ACCIDENTAL_DROP, False))
     if pick.get("spread_dir") is not None:
         r, _ = fk_mod.fk(q)
         current = r @ np.array(C.FINGER_SPREAD_AXIS)
@@ -290,7 +307,12 @@ def execute_one_pick(
                 raise RuntimeError(
                     f'IK failed: detection {pick["detection_id"]}, {name}, frame {i}; refusing off-target descent'
                 )
-            command(q, j0 + (j1 - j0) * t)
+            jaw = j0 + (j1 - j0) * t
+            if inject_drop and name == "lift" and i >= max(1, n // 3):
+                jaw = C.JAW_OPEN
+            elif inject_drop and name == "carry" and i >= max(1, n // 5):
+                jaw = C.JAW_OPEN
+            command(q, jaw)
             for _ in range(2):
                 world.step(render=not physics_only)
             if cam is not None:
@@ -455,6 +477,10 @@ def _run_pick_loop(
     side,
     before,
     stepwise,
+    inject_fault=None,
+    stage=None,
+    table_cam_path=None,
+    table_cam_resolution=None,
 ):
     from recovery_policy import classify_event
     from run_artifacts import LiveFramePublisher
@@ -494,6 +520,22 @@ def _run_pick_loop(
         if stepwise:
             step_state = mark_phase(step_state, "executing")
             save_step_state(run, step_state)
+            from grasp_fault import inject_fault_label, maybe_biased_pick
+
+            pick_index = int(step_state["current_pick_index"])
+            biased = maybe_biased_pick(
+                pick,
+                pick_index,
+                inject_fault,
+                retry_count=int(step_state.get("retry_count", 0)),
+            )
+            if biased is not pick:
+                print(
+                    f"[sort] inject test fault: {inject_fault_label(inject_fault)} "
+                    f"(retry_count={step_state.get('retry_count', 0)})",
+                    flush=True,
+                )
+                pick = biased
         event, q, frame, _ = execute_one_pick(
             pick,
             wrappers=wrappers,
@@ -556,8 +598,14 @@ def _run_pick_loop(
                 abort_reason = step_state["terminal_reason"]
                 print(f"[sort] {abort_reason}", flush=True)
                 break
-            if cam is not None:
-                capture_table_image(cam, run / "mid_step_capture.png")
+            if cam is not None and stage is not None and table_cam_path is not None:
+                capture_table_snapshot(
+                    stage,
+                    cam,
+                    table_cam_path,
+                    table_cam_resolution,
+                    run,
+                )
             step_state = begin_recovery(step_state)
             save_step_state(run, step_state)
             decision = _invoke_live_recovery(run)
@@ -656,7 +704,21 @@ def main():
         action="store_true",
         help="execute one verified cube at a time with live recovery on missed grasps",
     )
+    ap.add_argument(
+        "--inject-missed-grasp",
+        metavar="PICK:drop|DX:DY:DYAW",
+        help="stepwise only: PICK_INDEX:drop opens the gripper mid-lift/carry once, "
+        "or PICK_INDEX:DX_MM:DY_MM:DYAW_DEG offsets the grasp (example: 2:drop)",
+    )
     a = ap.parse_args()
+    if a.inject_missed_grasp and not a.stepwise:
+        ap.error("--inject-missed-grasp requires --stepwise")
+    inject_fault = None
+    if a.inject_missed_grasp:
+        from grasp_fault import fault_to_dict, parse_inject_missed_grasp
+
+        inject_fault = parse_inject_missed_grasp(a.inject_missed_grasp)
+    a.inject_fault = inject_fault
     if a.fps != 30:
         ap.error("Use 30 fps: two 1/60 s physics steps per video frame")
     run = Path(a.run).resolve()
@@ -667,6 +729,16 @@ def main():
         )
     plan = json.loads((run / "sort_plan.json").read_text())
     validate_plan(plan)
+    if inject_fault is not None:
+        from run_artifacts import atomic_write_json
+
+        fault_index = inject_fault[0]
+        if fault_index >= len(plan["picks"]):
+            raise SystemExit(
+                f"inject pick index {fault_index} out of range "
+                f"(plan has {len(plan['picks'])} picks)"
+            )
+        atomic_write_json(run / "inject_missed_grasp.json", fault_to_dict(inject_fault))
     if not plan["picks"]:
         raise SystemExit(
             "No eligible picks; inspect detections.json and sort_plan.json before rendering"
@@ -706,12 +778,19 @@ def main():
             "wrist": cell.WRIST_CAM_PATH,
         }
         configs = {"table": C.TABLE_CAM, "side": C.SIDE_CAM, "wrist": C.WRIST_CAM}
+        from camera_export import table_camera_resolution
+
+        table_cam_resolution = table_camera_resolution(plan.get("task", "sort"))
         cam = (
             None
             if a.physics_only
             else Camera(
                 prim_path=cam_paths[a.camera],
-                resolution=configs[a.camera]["resolution"],
+                resolution=(
+                    table_cam_resolution
+                    if a.camera == "table"
+                    else configs[a.camera]["resolution"]
+                ),
             )
         )
         cell.enable_ccd(world)
@@ -832,6 +911,10 @@ def main():
             side=side,
             before=before,
             stepwise=a.stepwise,
+            inject_fault=a.inject_fault,
+            stage=stage,
+            table_cam_path=cam_paths["table"],
+            table_cam_resolution=table_cam_resolution,
         )
     except Exception:
         # Kit shutdown may terminate Python before the exception is displayed.

@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from run_artifacts import atomic_write_json
+from run_bundle import mark_run_finalized
 from twin_stream_server import TwinStreamHandler
 
 
@@ -71,6 +72,12 @@ class TwinStreamServerTests(unittest.TestCase):
             },
         )
         (self.run / "review.txt").write_text("artifacts", encoding="utf-8")
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/status") as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        self.assertIsNone(payload.get("bundle_url"))
+        (self.run / "sort_table.mp4").write_bytes(b"mp4-table")
+        (self.run / "sort_side.mp4").write_bytes(b"mp4-side")
+        mark_run_finalized(self.run)
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/status") as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         self.assertEqual(payload["bundle_url"], "/bundle.zip")
