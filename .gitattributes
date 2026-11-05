@@ -1,2 +1,14 @@
+* text=auto eol=lf
+
+# Binary media and geometry must never be filtered as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.mp4 binary
+*.zip binary
+*.stl binary
+
+# These launchers must remain executable with Unix line endings.
 fanuc_er4ia_sim/run_with_recovery.sh text eol=lf
 fanuc_er4ia_sim/fake_isaac/python.sh text eol=lf
