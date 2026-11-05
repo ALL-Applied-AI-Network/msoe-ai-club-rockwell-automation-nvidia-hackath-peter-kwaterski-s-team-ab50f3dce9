@@ -63,6 +63,13 @@ Then each session: `source scripts/env.local.sh`. Manual steps: [`fanuc_er4ia_si
 
 ## Digital twin desktop dashboard
 
+For the interactive local React demonstration console (start runs, select cube
+fault scenarios and play the completed rendered video),
+see [`demo/README.md`](demo/README.md). The control API runs on Brev behind an
+SSH tunnel while React runs on the presenting laptop.
+
+From WSL, the complete demo can be launched with `bash scripts/start-demo.sh`.
+
 Run the read-only Tkinter dashboard with a desktop Python that includes Tkinter:
 
 ```bash

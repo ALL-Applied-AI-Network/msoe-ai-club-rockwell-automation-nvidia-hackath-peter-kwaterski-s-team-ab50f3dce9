@@ -5,4 +5,8 @@ certs/
 *.key
 *.p12
 *.pfx
+demo/frontend/node_modules/
+demo/frontend/dist/
+demo/frontend/*.tsbuildinfo
+fanuc_er4ia_sim/assets/lego/
 runs/

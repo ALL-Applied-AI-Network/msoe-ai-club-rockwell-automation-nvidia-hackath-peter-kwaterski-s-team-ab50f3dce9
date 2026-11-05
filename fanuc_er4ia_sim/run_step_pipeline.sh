@@ -13,9 +13,13 @@ HOST_PYTHON="${HOST_PYTHON:-$HERE/.venv/bin/python}"
 export HOST_PYTHON
 STREAM_PORT="${TWIN_STREAM_PORT:-8765}"
 STREAM_HOST="${TWIN_STREAM_HOST:-127.0.0.1}"
+STREAM_ENABLED=1
+if [ "${TWIN_STREAM_DISABLED:-0}" = 1 ]; then
+    STREAM_ENABLED=0
+fi
 STREAM_TLS_ARGS=()
 STREAM_SCHEME=http
-if [ -n "${TWIN_TLS_CA:-}${TWIN_TLS_CERT:-}${TWIN_TLS_KEY:-}" ]; then
+if [ "$STREAM_ENABLED" = 1 ] && [ -n "${TWIN_TLS_CA:-}${TWIN_TLS_CERT:-}${TWIN_TLS_KEY:-}" ]; then
     : "${TWIN_TLS_CA:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
     : "${TWIN_TLS_CERT:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
     : "${TWIN_TLS_KEY:?Set all three TWIN_TLS_CA, TWIN_TLS_CERT and TWIN_TLS_KEY for mutual TLS}"
@@ -29,12 +33,17 @@ if [ -n "$(ls -A "$RUN")" ]; then
     echo "Use an empty run directory: $RUN" >&2
     exit 1
 fi
-# Validate keys, trust configuration and binding before starting expensive stages.
-"$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" --check-config
-"$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" &
-STREAM_PID=$!
+STREAM_PID=""
+if [ "$STREAM_ENABLED" = 1 ]; then
+    # Validate keys, trust configuration and binding before starting expensive stages.
+    "$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" --check-config
+    "$HOST_PYTHON" "$HERE/twin_stream_server.py" --run "$RUN" --host "$STREAM_HOST" --port "$STREAM_PORT" "${STREAM_TLS_ARGS[@]}" &
+    STREAM_PID=$!
+fi
 cleanup() {
-    kill "$STREAM_PID" 2>/dev/null || true
+    if [ -n "$STREAM_PID" ]; then
+        kill "$STREAM_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 "$ISAAC/python.sh" "$HERE/capture_scene.py" --out "$RUN"
@@ -58,13 +67,15 @@ PY
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/frames" --out "$RUN/sort_table.mp4" --fps 30
 "$HOST_PYTHON" "$HERE/encode_video.py" --frames "$RUN/side_frames" --out "$RUN/sort_side.mp4" --fps 30
 "$HOST_PYTHON" "$HERE/run_bundle.py" --prepare-download "$RUN"
-if [ "$STREAM_SCHEME" = https ]; then
+if [ "$STREAM_ENABLED" = 0 ]; then
+    echo "Review $RUN — the external demo API owns status, frame, and video delivery."
+elif [ "$STREAM_SCHEME" = https ]; then
     echo "Review $RUN — connect TkinterView.py to https://<certificate-host>:$STREAM_PORT with the viewer's --tls-ca, --tls-cert and --tls-key (see docs/SECURE_STREAM.md)."
 else
     echo "Review $RUN — stream dashboard: python3 TkinterView.py --url http://127.0.0.1:$STREAM_PORT (via SSH tunnel from laptop)"
 fi
 POST_RUN="${TWIN_STREAM_POST_RUN_SEC:-900}"
-if [ "$POST_RUN" != 0 ]; then
+if [ "$STREAM_ENABLED" = 1 ] && [ "$POST_RUN" != 0 ]; then
     echo "[twin-stream] Stream stays up ${POST_RUN}s on ${STREAM_HOST}:${STREAM_PORT} for dashboard + bundle download (set TWIN_STREAM_POST_RUN_SEC=0 to stop immediately)." >&2
     sleep "$POST_RUN"
 fi

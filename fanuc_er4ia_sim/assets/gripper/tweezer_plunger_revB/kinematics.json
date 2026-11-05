@@ -1,0 +1,381 @@
+{
+  "schema": "revB_concept_kinematics_v1",
+  "units": {
+    "length": "mm",
+    "force": "N",
+    "angle": "rad"
+  },
+  "frame": {
+    "origin": "midpoint between closed inner carrier faces at base reference z=0",
+    "axes": {
+      "X": "across jaw opening; right positive",
+      "Y": "across fingertip width",
+      "Z": "distal toward LEGO"
+    },
+    "J6_transform": null
+  },
+  "mesh_coordinates": "All STEP/STL/OBJ components are pre-positioned in root coordinates at joint zero. Apply only the joint delta translation. Do not add another +/-4.1 offset.",
+  "joints": [
+    {
+      "name": "left_jaw",
+      "type": "prismatic",
+      "parent": "root",
+      "axis": [
+        -1,
+        0,
+        0
+      ],
+      "origin_xyz": [
+        0,
+        0,
+        0
+      ],
+      "limits": [
+        0,
+        6
+      ],
+      "zero": 0
+    },
+    {
+      "name": "right_jaw",
+      "type": "prismatic",
+      "parent": "root",
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "origin_xyz": [
+        0,
+        0,
+        0
+      ],
+      "limits": [
+        0,
+        6
+      ],
+      "zero": 0
+    },
+    {
+      "name": "plunger",
+      "type": "prismatic",
+      "parent": "root",
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "origin_xyz": [
+        0,
+        0,
+        0
+      ],
+      "limits": [
+        0,
+        12
+      ],
+      "zero": 0
+    }
+  ],
+  "links": {
+    "left_carrier": {
+      "motion_group": "left_jaw",
+      "step": "components/left_carrier.step",
+      "visual_mesh": "visual_meshes/left_carrier.stl",
+      "collision_meshes": [
+        "collision_meshes/left_carrier_00.obj"
+      ]
+    },
+    "left_finger_insert": {
+      "motion_group": "left_jaw",
+      "step": "components/left_finger_insert.step",
+      "visual_mesh": "visual_meshes/left_finger_insert.stl",
+      "collision_meshes": [
+        "collision_meshes/left_finger_insert_00.obj"
+      ]
+    },
+    "left_finger_pad": {
+      "motion_group": "left_jaw",
+      "step": "components/left_finger_pad.step",
+      "visual_mesh": "visual_meshes/left_finger_pad.stl",
+      "collision_meshes": [
+        "collision_meshes/left_finger_pad_00.obj"
+      ]
+    },
+    "right_carrier": {
+      "motion_group": "right_jaw",
+      "step": "components/right_carrier.step",
+      "visual_mesh": "visual_meshes/right_carrier.stl",
+      "collision_meshes": [
+        "collision_meshes/right_carrier_00.obj"
+      ]
+    },
+    "right_finger_insert": {
+      "motion_group": "right_jaw",
+      "step": "components/right_finger_insert.step",
+      "visual_mesh": "visual_meshes/right_finger_insert.stl",
+      "collision_meshes": [
+        "collision_meshes/right_finger_insert_00.obj"
+      ]
+    },
+    "right_finger_pad": {
+      "motion_group": "right_jaw",
+      "step": "components/right_finger_pad.step",
+      "visual_mesh": "visual_meshes/right_finger_pad.stl",
+      "collision_meshes": [
+        "collision_meshes/right_finger_pad_00.obj"
+      ]
+    },
+    "plunger_housing": {
+      "motion_group": "fixed",
+      "step": "components/plunger_housing.step",
+      "visual_mesh": "visual_meshes/plunger_housing.stl",
+      "collision_meshes": [
+        "collision_meshes/plunger_housing_00.obj",
+        "collision_meshes/plunger_housing_01.obj",
+        "collision_meshes/plunger_housing_02.obj",
+        "collision_meshes/plunger_housing_03.obj",
+        "collision_meshes/plunger_housing_04.obj",
+        "collision_meshes/plunger_housing_05.obj"
+      ]
+    },
+    "plunger_rod": {
+      "motion_group": "plunger",
+      "step": "components/plunger_rod.step",
+      "visual_mesh": "visual_meshes/plunger_rod.stl",
+      "collision_meshes": [
+        "collision_meshes/plunger_rod_00.obj"
+      ]
+    },
+    "round_tip": {
+      "motion_group": "plunger",
+      "step": "components/round_tip.step",
+      "visual_mesh": "visual_meshes/round_tip.stl",
+      "collision_meshes": [
+        "collision_meshes/round_tip_00.obj"
+      ]
+    },
+    "flat_shoe": {
+      "motion_group": "plunger",
+      "step": "components/flat_shoe.step",
+      "visual_mesh": "visual_meshes/flat_shoe.stl",
+      "collision_meshes": [
+        "collision_meshes/flat_shoe_00.obj"
+      ]
+    },
+    "flat_shoe_pad": {
+      "motion_group": "plunger",
+      "step": "components/flat_shoe_pad.step",
+      "visual_mesh": "visual_meshes/flat_shoe_pad.stl",
+      "collision_meshes": [
+        "collision_meshes/flat_shoe_pad_00.obj"
+      ]
+    },
+    "bridge_shoe": {
+      "motion_group": "plunger",
+      "step": "components/bridge_shoe.step",
+      "visual_mesh": "visual_meshes/bridge_shoe.stl",
+      "collision_meshes": [
+        "collision_meshes/bridge_shoe_00.obj"
+      ]
+    },
+    "bridge_shoe_pad": {
+      "motion_group": "plunger",
+      "step": "components/bridge_shoe_pad.step",
+      "visual_mesh": "visual_meshes/bridge_shoe_pad.stl",
+      "collision_meshes": [
+        "collision_meshes/bridge_shoe_pad_00.obj"
+      ]
+    }
+  },
+  "tool_options": {
+    "round": [
+      "round_tip"
+    ],
+    "flat": [
+      "flat_shoe",
+      "flat_shoe_pad"
+    ],
+    "bridge": [
+      "bridge_shoe",
+      "bridge_shoe_pad"
+    ]
+  },
+  "default_tool": "flat",
+  "fixed_links": [
+    "plunger_housing"
+  ],
+  "always_present": [
+    "left_carrier",
+    "left_finger_insert",
+    "left_finger_pad",
+    "right_carrier",
+    "right_finger_insert",
+    "right_finger_pad",
+    "plunger_housing",
+    "plunger_rod"
+  ],
+  "invariants": {
+    "pad_gap_expression_mm": "7 + left_jaw + right_jaw",
+    "finger_end_z": 60,
+    "contact_face_z_expression_mm": "52 + plunger",
+    "jaw_closed_face_locations_x": [
+      -4.1,
+      4.1
+    ],
+    "shoe_x_width": 5
+  },
+  "actuation_assumptions": {
+    "jaw_dofs": "independent virtual joints; existing parallel gripper independence is not asserted",
+    "symmetric_command": "left_jaw = right_jaw",
+    "plunger_actuator": "not modeled; external axial force input"
+  },
+  "force_control_target": {
+    "nominal_max_force_N": 20,
+    "suggested_range_N": [
+      15,
+      20
+    ],
+    "measured_capability": false,
+    "optional_virtual_compliance": {
+      "enabled_by_default": false,
+      "stiffness_N_per_mm": 10,
+      "maximum_deflection_mm": 2,
+      "force_cap_N": 20,
+      "implementation": "contact/impedance model only; not a mechanical spring or extra geometric stroke",
+      "note": "Do not command geometric extension above 12 mm. TPU stiffness and contact friction require measurement."
+    }
+  },
+  "collision_policy": {
+    "disable_within_same_motion_group": true,
+    "disable_pairs": [
+      [
+        "plunger_housing",
+        "plunger_rod"
+      ]
+    ],
+    "note": "Convex hulls fill holes and recesses; internal guide/shaft and rigid fastenings need collision filtering. Housing uses six wall proxies preserving channel. External contacts remain active."
+  },
+  "configurations": [
+    {
+      "file": "configurations/assembly_closed_retracted_round.step",
+      "end": "round",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 0
+      },
+      "solids": 9
+    },
+    {
+      "file": "configurations/assembly_closed_extended_round.step",
+      "end": "round",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 12
+      },
+      "solids": 9
+    },
+    {
+      "file": "configurations/assembly_open_retracted_round.step",
+      "end": "round",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 0
+      },
+      "solids": 9
+    },
+    {
+      "file": "configurations/assembly_open_extended_round.step",
+      "end": "round",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 12
+      },
+      "solids": 9
+    },
+    {
+      "file": "configurations/assembly_closed_retracted_flat.step",
+      "end": "flat",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 0
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_closed_extended_flat.step",
+      "end": "flat",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 12
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_open_retracted_flat.step",
+      "end": "flat",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 0
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_open_extended_flat.step",
+      "end": "flat",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 12
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_closed_retracted_bridge.step",
+      "end": "bridge",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 0
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_closed_extended_bridge.step",
+      "end": "bridge",
+      "joints_mm": {
+        "left_jaw": 0,
+        "right_jaw": 0,
+        "plunger": 12
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_open_retracted_bridge.step",
+      "end": "bridge",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 0
+      },
+      "solids": 10
+    },
+    {
+      "file": "configurations/assembly_open_extended_bridge.step",
+      "end": "bridge",
+      "joints_mm": {
+        "left_jaw": 6,
+        "right_jaw": 6,
+        "plunger": 12
+      },
+      "solids": 10
+    }
+  ]
+}

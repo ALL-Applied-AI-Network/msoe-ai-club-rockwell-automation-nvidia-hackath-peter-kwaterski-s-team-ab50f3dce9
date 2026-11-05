@@ -218,6 +218,7 @@ def init_materials(stage):
 PHYS_MAT_PATH = "/World/Physics/ObjectMaterial"
 TAPE_MAT_PATH = "/World/Physics/TapeMaterial"
 SOFT_TIP_MAT_PATH = "/World/Physics/SoftTipMaterial"
+PLUNGER_FACE_MAT_PATH = "/World/Physics/PlungerFaceMaterial"
 
 
 def enable_ccd(world):
@@ -275,6 +276,18 @@ def init_physics(stage):
     PhysxSchema.PhysxMaterialAPI.Apply(
         tip.GetPrim()
     ).CreateFrictionCombineModeAttr().Set("max")
+
+    # The hard-plastic plunger transmits axial press force but should release
+    # without dragging a seated part tangentially. Jaw pads remain high-friction.
+    plunger_face = UsdPhysics.MaterialAPI.Apply(
+        UsdShade.Material.Define(stage, PLUNGER_FACE_MAT_PATH).GetPrim()
+    )
+    plunger_face.CreateStaticFrictionAttr().Set(0.80)
+    plunger_face.CreateDynamicFrictionAttr().Set(0.60)
+    plunger_face.CreateRestitutionAttr().Set(0.0)
+    PhysxSchema.PhysxMaterialAPI.Apply(
+        plunger_face.GetPrim()
+    ).CreateFrictionCombineModeAttr().Set("min")
 
 
 def bind_physics_material(prim, path=PHYS_MAT_PATH):
@@ -575,7 +588,58 @@ def scale_cad_visual(stage, path, scale):
     )
 
 
-def build(stage, with_objects=True):
+def add_robot(
+    stage, robot_prim, position, yaw_deg=0.0, *, attach_tool=True, finger_style="stock"
+):
+    """Reference one namespaced ER-4iA and optionally attach its gripper.
+
+    ``build`` historically embedded a single robot at ``C.ROBOT_PRIM``.  LEGO
+    assembly needs two independently addressable articulations, so robot
+    creation is now a reusable operation while the legacy caller keeps the
+    same default prim and pose.
+    """
+    robot_usd = os.environ.get("FANUC_ROBOT_USD")
+    if not robot_usd:
+        asset_root = get_assets_root_path()
+        if not asset_root:
+            raise RuntimeError(
+                "Isaac asset root unavailable; set FANUC_ROBOT_USD to a robot USD URI or local file"
+            )
+        robot_usd = asset_root + C.ROBOT_USD_SUBPATH
+    print(f"[cell] referencing robot {robot_prim}: {robot_usd}")
+    add_reference_to_stage(usd_path=robot_usd, prim_path=robot_prim)
+    place(stage.GetPrimAtPath(robot_prim), position, yaw_deg)
+
+    base = stage.GetPrimAtPath(robot_prim + "/robot_base/visuals")
+    if C.ROBOT_BASE_GREY and base.IsValid() and "base_grey" in MATS:
+        base.SetInstanceable(False)
+        UsdShade.MaterialBindingAPI.Apply(base).Bind(
+            MATS["base_grey"], bindingStrength=UsdShade.Tokens.strongerThanDescendants
+        )
+
+    flange = robot_prim + "/J6_link"
+    if attach_tool and stage.GetPrimAtPath(flange).IsValid():
+        attach_gripper(
+            stage,
+            robot_prim=robot_prim,
+            base_position=position,
+            finger_style=finger_style,
+        )
+    elif attach_tool:
+        print(f"[cell] WARNING: {flange} not found; gripper not attached", file=sys.stderr)
+    return stage.GetPrimAtPath(robot_prim)
+
+
+def build(
+    stage,
+    with_objects=True,
+    *,
+    robot_prim=None,
+    robot_position=None,
+    finger_style="stock",
+):
+    robot_prim = robot_prim or C.ROBOT_PRIM
+    robot_position = robot_position or (0.0, 0.0, C.TABLE_TOP_Z)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     UsdGeom.Xform.Define(stage, "/World")
@@ -623,26 +687,7 @@ def build(stage, with_objects=True):
     bind_physics_material(matp)
     small_contact_offsets(matp)
 
-    robot_usd = os.environ.get("FANUC_ROBOT_USD")
-    if not robot_usd:
-        asset_root = get_assets_root_path()
-        if not asset_root:
-            raise RuntimeError(
-                "Isaac asset root unavailable; set FANUC_ROBOT_USD to a robot USD URI or local file"
-            )
-        robot_usd = asset_root + C.ROBOT_USD_SUBPATH
-    print(f"[cell] referencing robot: {robot_usd}")
-    add_reference_to_stage(usd_path=robot_usd, prim_path=C.ROBOT_PRIM)
-    place(stage.GetPrimAtPath(C.ROBOT_PRIM), (0.0, 0.0, C.TABLE_TOP_Z), 0.0)
-    # The asset's visuals are instanceable, and a binding on an ancestor does
-    # not reach an instance's prototype in the renderer -- de-instance the base
-    # visuals locally so the override takes.
-    base = stage.GetPrimAtPath(C.ROBOT_PRIM + "/robot_base/visuals")
-    if C.ROBOT_BASE_GREY and base.IsValid() and "base_grey" in MATS:
-        base.SetInstanceable(False)
-        UsdShade.MaterialBindingAPI.Apply(base).Bind(
-            MATS["base_grey"], bindingStrength=UsdShade.Tokens.strongerThanDescendants
-        )
+    add_robot(stage, robot_prim, robot_position, finger_style=finger_style)
 
     if C.MAT_MARKINGS:
         add_mat_print(stage)
@@ -655,17 +700,12 @@ def build(stage, with_objects=True):
         if C.SHOW_BINS:
             add_sort_bins(stage)
 
-    if stage.GetPrimAtPath(FLANGE).IsValid():
-        attach_gripper(stage)
-    else:
-        print(
-            f"[cell] WARNING: {FLANGE} not found; gripper not attached", file=sys.stderr
-        )
-
     camera(stage, TABLE_CAM_PATH, C.TABLE_CAM)
     camera(stage, SIDE_CAM_PATH, C.SIDE_CAM)
-    if stage.GetPrimAtPath(C.WRIST_CAM["parent"]).IsValid():
-        camera(stage, WRIST_CAM_PATH, C.WRIST_CAM)
+    wrist_parent = robot_prim + "/J6_link"
+    if stage.GetPrimAtPath(wrist_parent).IsValid():
+        wrist_cfg = dict(C.WRIST_CAM, parent=wrist_parent)
+        camera(stage, wrist_parent + "/WristCam", wrist_cfg)
 
 
 def add_lighting(stage):
@@ -1241,9 +1281,19 @@ def grasp_offset():
     return fx + C.SCALLOP_AT * C.FINGER_LENGTH
 
 
-def tip_offset():
+def tip_offset(finger_style="stock"):
     """Flange face to the fingertips -- the reference for table-top grasps."""
     _, fx = gripper_layout()
+    if finger_style == "rev_a":
+        from fingertip_kit import AXIAL_LENGTH_M
+
+        return fx + AXIAL_LENGTH_M
+    if finger_style in {"rev_b", "rev_c"}:
+        from tweezer_plunger import AXIAL_LENGTH_M
+
+        return fx + AXIAL_LENGTH_M
+    if finger_style != "stock":
+        raise ValueError(f"unknown finger style: {finger_style}")
     return fx + C.FINGER_LENGTH
 
 
@@ -1302,7 +1352,15 @@ def detailed_finger_visual(stage, jaw_path, sign, offset):
         )
 
 
-def attach_gripper(stage, jaw=None, articulated=True):
+def attach_gripper(
+    stage,
+    jaw=None,
+    articulated=True,
+    *,
+    robot_prim=None,
+    base_position=None,
+    finger_style="stock",
+):
     """EOAT modelled from the bench photos, with real physics.
 
     Static parts (adapter, cylinder, flange, gripper body, jaw plate, camera and
@@ -1320,8 +1378,17 @@ def attach_gripper(stage, jaw=None, articulated=True):
     rigid body inside another rigid body's subtree is invalid.
     articulated=False builds a static, zero-origin assembly for inspection.
     """
+    robot_prim = robot_prim or C.ROBOT_PRIM
+    flange = robot_prim + "/J6_link"
+    jaw_prims = {"L": robot_prim + "/JawL", "R": robot_prim + "/JawR"}
+    jaw_joints = {"L": "jaw_l", "R": "jaw_r"}
+    extra_tool_roots = []
+    if base_position is None:
+        base_position = (0.0, 0.0, C.TABLE_TOP_Z)
     if jaw is None:
         jaw = C.JAW_OPEN
+    if finger_style not in {"stock", "rev_a", "rev_b", "rev_c"}:
+        raise ValueError(f"unknown finger style: {finger_style}")
     ax = np.array(C.TOOL_AXIS, float)
     sp = np.array(C.FINGER_SPREAD_AXIS, float)
 
@@ -1343,7 +1410,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
 
     x = C.FLANGE_OFFSET
     disc(
-        FLANGE + "/Gripper/Adapter",
+        flange + "/Gripper/Adapter",
         C.ADAPTER_R,
         C.ADAPTER_T,
         x,
@@ -1354,7 +1421,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
     if C.ZCYL_RECTANGULAR:
         box(
             stage,
-            FLANGE + "/Gripper/ZCylinder",
+            flange + "/Gripper/ZCylinder",
             (C.ZCYL_LEN, C.ZCYL_BODY_W, C.ZCYL_BODY_D),
             at(x + C.ZCYL_LEN / 2),
             ANODISED,
@@ -1362,16 +1429,16 @@ def attach_gripper(stage, jaw=None, articulated=True):
         )
         box(
             stage,
-            FLANGE + "/Gripper/SlideRail",
+            flange + "/Gripper/SlideRail",
             (C.ZCYL_LEN * 0.85, 0.009, 0.003),
             (x + C.ZCYL_LEN / 2, 0, C.ZCYL_BODY_D / 2 + 0.0015),
             METAL,
             mat="alu_machined",
         )
     else:
-        disc(FLANGE + "/Gripper/ZCylinder", C.ZCYL_R, C.ZCYL_LEN, x, METAL)
+        disc(flange + "/Gripper/ZCylinder", C.ZCYL_R, C.ZCYL_LEN, x, METAL)
     disc(
-        FLANGE + "/Gripper/Collar",
+        flange + "/Gripper/Collar",
         C.COLLAR_R,
         C.COLLAR_T,
         x + C.COLLAR_AT,
@@ -1379,24 +1446,24 @@ def attach_gripper(stage, jaw=None, articulated=True):
         mat="alu_machined",
     )
     x += C.ZCYL_LEN
-    disc(FLANGE + "/Gripper/ZFlange", C.ZFLANGE_R, C.ZFLANGE_T, x, METAL)
+    disc(flange + "/Gripper/ZFlange", C.ZFLANGE_R, C.ZFLANGE_T, x, METAL)
     x += C.ZFLANGE_T
 
     body = box(
         stage,
-        FLANGE + "/Gripper/Body",
+        flange + "/Gripper/Body",
         (C.BODY_LEN, C.BODY_W, C.BODY_D),
         at(x + C.BODY_LEN / 2),
         ANODISED,
         mat="alu_anodised",
     )
     UsdGeom.Imageable(body).CreateVisibilityAttr().Set("invisible")
-    smc_visual(stage, FLANGE + "/Gripper/SMCBody", "body", at(x), "alu_anodised")
+    smc_visual(stage, flange + "/Gripper/SMCBody", "body", at(x), "alu_anodised")
     x += C.BODY_LEN
     if C.PLATE_T > 0:
         box(
             stage,
-            FLANGE + "/Gripper/JawPlate",
+            flange + "/Gripper/JawPlate",
             (C.PLATE_T, C.PLATE_W, C.PLATE_D),
             at(x + C.PLATE_T / 2),
             DARK_METAL,
@@ -1407,11 +1474,13 @@ def attach_gripper(stage, jaw=None, articulated=True):
     carriage_x, finger_x = gripper_layout()
 
     for sign, tag in ((+1, "L"), (-1, "R")):
-        jaw_path = JAW_PRIMS[tag]
+        jaw_path = jaw_prims[tag]
         g = UsdGeom.Xform.Define(stage, jaw_path)
         # place the jaw where it sits with the arm at its zero pose
         home = (
-            np.array([0.29, 0.0, 0.61 + C.TABLE_TOP_Z]) if articulated else np.zeros(3)
+            np.asarray(base_position, float) + np.array([0.29, 0.0, 0.61])
+            if articulated
+            else np.zeros(3)
         )
         UsdGeom.Xformable(g.GetPrim()).AddTranslateOp().Set(
             Gf.Vec3d(
@@ -1610,15 +1679,157 @@ def attach_gripper(stage, jaw=None, articulated=True):
             )
             bind_physics_material(tprim, TAPE_MAT_PATH)
 
+        if finger_style in {"rev_a", "rev_b", "rev_c"}:
+            # Retain the stock source geometry in the stage for provenance,
+            # but remove it from rendering and physics. The supplied Rev A STL
+            # solids become the only active distal fingertip surfaces.
+            hidden_prefixes = (
+                jaw_path + "/Finger",
+                jaw_path + "/SoftTip",
+                jaw_path + "/Detail",
+                jaw_path + "/Collision",
+                jaw_path + "/MountScrew",
+                jaw_path + "/ScrewSocket",
+                jaw_path + "/OuterCrossBolt",
+                jaw_path + "/SensorCarrier",
+                jaw_path + "/SensorRedNose",
+                jaw_path + "/Tape",
+            )
+            for prim in stage.Traverse():
+                path = str(prim.GetPath())
+                if any(path.startswith(prefix) for prefix in hidden_prefixes):
+                    if prim.IsA(UsdGeom.Imageable):
+                        UsdGeom.Imageable(prim).CreateVisibilityAttr().Set("invisible")
+                    if prim.HasAPI(UsdPhysics.CollisionAPI):
+                        UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr().Set(False)
+
+            if finger_style == "rev_a":
+                from fingertip_kit import add_rev_a
+
+                add_rev_a(
+                    stage,
+                    jaw_path,
+                    sign,
+                    finger_x - carriage_x,
+                    bind_visual_material=bind_mat,
+                    bind_physics_material=bind_physics_material,
+                    soft_tip_material_path=SOFT_TIP_MAT_PATH,
+                    object_material_path=PHYS_MAT_PATH,
+                )
+            else:
+                from tweezer_plunger import (
+                    CLEARANCE_SLIDE_MAX_FORCE_N,
+                    CLEARANCE_SLIDE_SIM_MASS_KG,
+                    CLEARANCE_SLIDE_STROKE_M,
+                    add_jaw,
+                )
+
+                split_clearance_insert = finger_style == "rev_c" and tag == "L"
+                add_jaw(
+                    stage,
+                    jaw_path,
+                    sign * C.FINGER_WIDTH / 2,
+                    finger_x - carriage_x,
+                    bind_visual=bind_mat,
+                    bind_physics=bind_physics_material,
+                    soft_material=SOFT_TIP_MAT_PATH,
+                    object_material=PHYS_MAT_PATH,
+                    link_suffixes=("carrier", "retraction_guide") if split_clearance_insert else (
+                        "carrier",
+                        "finger_insert",
+                        "finger_pad",
+                    ),
+                )
+                if split_clearance_insert:
+                    # Simulation prototype for the user-requested Rev C
+                    # attachment: keep the carrier on JawL, but put its distal
+                    # insert and compliant pad on the supplied independently
+                    # actuated slide that moves outward along local +Y.
+                    clearance_path = robot_prim + "/JawLClearance"
+                    extra_tool_roots.append(clearance_path)
+                    clearance = UsdGeom.Xform.Define(stage, clearance_path)
+                    UsdGeom.Xformable(clearance.GetPrim()).AddTranslateOp().Set(
+                        Gf.Vec3d(
+                            *(
+                                home
+                                + np.array(
+                                    at(
+                                        carriage_x,
+                                        sign * (jaw + C.FINGER_WIDTH / 2),
+                                    )
+                                )
+                            )
+                        )
+                    )
+                    add_jaw(
+                        stage,
+                        clearance_path,
+                        sign * C.FINGER_WIDTH / 2,
+                        finger_x - carriage_x,
+                        bind_visual=bind_mat,
+                        bind_physics=bind_physics_material,
+                        soft_material=SOFT_TIP_MAT_PATH,
+                        object_material=PHYS_MAT_PATH,
+                        link_suffixes=("finger_insert", "finger_pad"),
+                    )
+                    if articulated:
+                        UsdPhysics.RigidBodyAPI.Apply(
+                            clearance.GetPrim()
+                        ).CreateRigidBodyEnabledAttr().Set(True)
+                        UsdPhysics.MassAPI.Apply(clearance.GetPrim()).CreateMassAttr(
+                            CLEARANCE_SLIDE_SIM_MASS_KG
+                        )
+                        clearance_joint = UsdPhysics.PrismaticJoint.Define(
+                            stage, flange + "/Gripper/JawL_retract"
+                        )
+                        clearance_joint.CreateBody0Rel().SetTargets([jaw_path])
+                        clearance_joint.CreateBody1Rel().SetTargets([clearance_path])
+                        clearance_joint.CreateAxisAttr().Set("Y")
+                        clearance_joint.CreateLocalPos0Attr().Set(
+                            Gf.Vec3f(0.0, 0.0, 0.0)
+                        )
+                        clearance_joint.CreateLocalPos1Attr().Set(
+                            Gf.Vec3f(0.0, 0.0, 0.0)
+                        )
+                        clearance_joint.CreateLowerLimitAttr().Set(0.0)
+                        clearance_joint.CreateUpperLimitAttr().Set(
+                            CLEARANCE_SLIDE_STROKE_M
+                        )
+                        clearance_drive = UsdPhysics.DriveAPI.Apply(
+                            clearance_joint.GetPrim(), "linear"
+                        )
+                        clearance_drive.CreateTypeAttr().Set("force")
+                        # This actuator is position-locked during grasp and
+                        # press; it is not the low-force lateral pinch DOF.
+                        # High holding stiffness prevents the distal insert
+                        # from floating under normal pickup/press loads.
+                        clearance_drive.CreateStiffnessAttr().Set(1.0e5)
+                        clearance_drive.CreateDampingAttr().Set(200.0)
+                        clearance_drive.CreateMaxForceAttr().Set(
+                            CLEARANCE_SLIDE_MAX_FORCE_N
+                        )
+                        clearance_drive.CreateTargetPositionAttr().Set(0.0)
+                        clearance_filtered = UsdPhysics.FilteredPairsAPI.Apply(
+                            clearance.GetPrim()
+                        )
+                        clearance_filtered.CreateFilteredPairsRel().SetTargets(
+                            [Sdf.Path(jaw_path)]
+                        )
+
         if articulated:
             rb = UsdPhysics.RigidBodyAPI.Apply(g.GetPrim())
             rb.CreateRigidBodyEnabledAttr().Set(True)
-            UsdPhysics.MassAPI.Apply(g.GetPrim()).CreateMassAttr(C.JAW_MASS)
+            jaw_mass = C.JAW_MASS
+            if finger_style == "rev_c" and tag == "L":
+                from tweezer_plunger import CLEARANCE_SLIDE_SIM_MASS_KG
+
+                jaw_mass -= CLEARANCE_SLIDE_SIM_MASS_KG
+            UsdPhysics.MassAPI.Apply(g.GetPrim()).CreateMassAttr(jaw_mass)
 
             j = UsdPhysics.PrismaticJoint.Define(
-                stage, FLANGE + f"/Gripper/{JAW_JOINTS[tag]}"
+                stage, flange + f"/Gripper/{jaw_joints[tag]}"
             )
-            j.CreateBody0Rel().SetTargets([FLANGE])
+            j.CreateBody0Rel().SetTargets([flange])
             j.CreateBody1Rel().SetTargets([jaw_path])
             j.CreateAxisAttr().Set("Y")
             j.CreateLocalPos0Attr().Set(
@@ -1635,10 +1846,92 @@ def attach_gripper(stage, jaw=None, articulated=True):
                 j.CreateUpperLimitAttr().Set(travel)
             drive = UsdPhysics.DriveAPI.Apply(j.GetPrim(), "linear")
             drive.CreateTypeAttr().Set("force")
-            drive.CreateStiffnessAttr().Set(C.JAW_DRIVE_STIFF)
-            drive.CreateDampingAttr().Set(C.JAW_DRIVE_DAMP)
-            drive.CreateMaxForceAttr().Set(C.JAW_MAX_FORCE)
+            if finger_style == "rev_a":
+                # Delicate-part profile: the stock 180 N / 40 kN/m drive can
+                # eject millimetre-scale parts or deflect the arm through a
+                # rigid collision response before the thin pads settle.
+                drive.CreateStiffnessAttr().Set(2.0e3)
+                drive.CreateDampingAttr().Set(2.0e2)
+                drive.CreateMaxForceAttr().Set(10.0)
+            elif finger_style == "rev_b":
+                # Rubber-on-plastic friction supplies retention; the drive is
+                # intentionally capped at the same delicate-part preload as
+                # Rev A rather than substituting excessive normal force.
+                drive.CreateStiffnessAttr().Set(2.0e3)
+                drive.CreateDampingAttr().Set(2.0e2)
+                drive.CreateMaxForceAttr().Set(10.0)
+            elif finger_style == "rev_c":
+                # Keep the lateral pinch at or below the supplied independent
+                # insert actuator's provisional 5 N force cap so pickup cannot
+                # back-drive JawL_retract away from its zero stop.
+                drive.CreateStiffnessAttr().Set(2.0e3)
+                drive.CreateDampingAttr().Set(2.0e2)
+                drive.CreateMaxForceAttr().Set(5.0)
+            else:
+                drive.CreateStiffnessAttr().Set(C.JAW_DRIVE_STIFF)
+                drive.CreateDampingAttr().Set(C.JAW_DRIVE_DAMP)
+                drive.CreateMaxForceAttr().Set(C.JAW_MAX_FORCE)
             drive.CreateTargetPositionAttr().Set(0.0)
+
+    if finger_style in {"rev_b", "rev_c"}:
+        from tweezer_plunger import (
+            PLUNGER_MAX_FORCE_N,
+            PLUNGER_SIM_MASS_KG,
+            PLUNGER_STROKE_M,
+            add_fixed_housing,
+            add_moving_plunger,
+        )
+
+        add_fixed_housing(
+            stage,
+            flange,
+            finger_x,
+            bind_visual=bind_mat,
+            bind_physics=bind_physics_material,
+            object_material=PHYS_MAT_PATH,
+        )
+        plunger_path = robot_prim + "/Plunger"
+        plunger = UsdGeom.Xform.Define(stage, plunger_path)
+        home = (
+            np.asarray(base_position, float) + np.array([0.29, 0.0, 0.61])
+            if articulated
+            else np.zeros(3)
+        )
+        UsdGeom.Xformable(plunger.GetPrim()).AddTranslateOp().Set(
+            Gf.Vec3d(*(home + np.asarray(at(finger_x), float)))
+        )
+        add_moving_plunger(
+            stage,
+            plunger_path,
+            tool_option="flat",
+            bind_visual=bind_mat,
+            bind_physics=bind_physics_material,
+            soft_material=PLUNGER_FACE_MAT_PATH,
+            object_material=PHYS_MAT_PATH,
+        )
+        if articulated:
+            UsdPhysics.RigidBodyAPI.Apply(plunger.GetPrim()).CreateRigidBodyEnabledAttr().Set(True)
+            UsdPhysics.MassAPI.Apply(plunger.GetPrim()).CreateMassAttr(PLUNGER_SIM_MASS_KG)
+            joint = UsdPhysics.PrismaticJoint.Define(
+                stage, flange + "/Gripper/plunger"
+            )
+            joint.CreateBody0Rel().SetTargets([flange])
+            joint.CreateBody1Rel().SetTargets([plunger_path])
+            joint.CreateAxisAttr().Set("X")
+            joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*at(finger_x)))
+            joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+            joint.CreateLowerLimitAttr().Set(0.0)
+            joint.CreateUpperLimitAttr().Set(PLUNGER_STROKE_M)
+            drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "linear")
+            drive.CreateTypeAttr().Set("force")
+            # The supplied optional compliance model is 10 N/mm with a 20 N
+            # cap.  This is a simulation assumption, not measured hardware.
+            drive.CreateStiffnessAttr().Set(1.0e4)
+            drive.CreateDampingAttr().Set(20.0)
+            drive.CreateMaxForceAttr().Set(PLUNGER_MAX_FORCE_N)
+            drive.CreateTargetPositionAttr().Set(0.0)
+            filtered = UsdPhysics.FilteredPairsAPI.Apply(plunger.GetPrim())
+            filtered.CreateFilteredPairsRel().SetTargets([Sdf.Path(flange)])
 
     # Wrist vision: compact grey camera body on a bracket to one side of the
     # tool. PHOTO 2026-10-08: no ring light — earlier model was wrong.
@@ -1667,7 +1960,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
     ):
         housing = prism(
             stage,
-            FLANGE + "/Gripper/" + name,
+            flange + "/Gripper/" + name,
             _rounded_square(cb[0] / 2, C.CAM_CORNER_R),
             depth,
             C.CAMBODY_GREY,
@@ -1684,7 +1977,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
     for y in (-0.018, 0.018):
         for z in (-0.018, 0.018):
             screw = disc(
-                FLANGE
+                flange
                 + f"/Gripper/CamScrew_{y}_{z}".replace("-", "m").replace(".", "p"),
                 0.0018,
                 0.001,
@@ -1696,7 +1989,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
                 Gf.Vec3d(cam_bot - cb[2] - 0.0025, side[1] * lat + y, side[2] * lat + z)
             )
     # small lens cylinder on the bottom face of the camera body, pointing down
-    lens = UsdGeom.Cylinder.Define(stage, FLANGE + "/Gripper/WristCamLens")
+    lens = UsdGeom.Cylinder.Define(stage, flange + "/Gripper/WristCamLens")
     lens.CreateAxisAttr("X")
     lens.CreateRadiusAttr(0.008)
     lens.CreateHeightAttr(0.006)
@@ -1708,7 +2001,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
     arm_x = C.FLANGE_OFFSET + C.ADAPTER_T + C.ZCYL_LEN + C.ZFLANGE_T / 2
     box(
         stage,
-        FLANGE + "/Gripper/CamBracketArm",
+        flange + "/Gripper/CamBracketArm",
         (C.BRACKET_T, 0.018, lat - cb[1] / 2),
         at_side(arm_x, (lat - cb[1] / 2) / 2 + C.ZFLANGE_R / 2),
         DARK_METAL,
@@ -1718,7 +2011,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
     drop = cam_bot - arm_x
     box(
         stage,
-        FLANGE + "/Gripper/CamBracketPlate",
+        flange + "/Gripper/CamBracketPlate",
         (max(abs(drop), C.BRACKET_T), 0.018, C.BRACKET_T),
         at_side(arm_x + drop / 2, lat - cb[1] / 2 - C.BRACKET_T / 2),
         DARK_METAL,
@@ -1731,7 +2024,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
             # Two stacked pneumatic sensor/valve units visible above the jaws.
             box(
                 stage,
-                FLANGE + f"/Gripper/PneumaticBlock{n}",
+                flange + f"/Gripper/PneumaticBlock{n}",
                 (0.012, 0.022, 0.014),
                 (finger_x - 0.027 + n * 0.014, -0.004, 0.022),
                 ANODISED,
@@ -1739,7 +2032,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
             )
             box(
                 stage,
-                FLANGE + f"/Gripper/PneumaticInsert{n}",
+                flange + f"/Gripper/PneumaticInsert{n}",
                 (0.006, 0.019, 0.002),
                 (finger_x - 0.027 + n * 0.014, -0.004, 0.030),
                 color,
@@ -1750,14 +2043,14 @@ def attach_gripper(stage, jaw=None, articulated=True):
         ):
             cyl(
                 stage,
-                FLANGE + f"/Gripper/AirFitting{n}",
+                flange + f"/Gripper/AirFitting{n}",
                 0.0034,
                 0.010,
                 (along, C.ZCYL_BODY_W / 2, 0),
                 DARK_METAL,
                 mat="steel_dark",
             )
-            hose = UsdGeom.BasisCurves.Define(stage, FLANGE + f"/Gripper/AirTube{n}")
+            hose = UsdGeom.BasisCurves.Define(stage, flange + f"/Gripper/AirTube{n}")
             hose.CreateTypeAttr("linear")
             hose.CreateWrapAttr("nonperiodic")
             hose.CreateCurveVertexCountsAttr([5])
@@ -1775,7 +2068,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
             hose.CreateDisplayColorAttr([Gf.Vec3f(*color)])
             bind_mat(hose.GetPrim(), "air_line_blue")
         laser = disc(
-            FLANGE + "/Gripper/LaserBody",
+            flange + "/Gripper/LaserBody",
             C.LASER_RADIUS,
             C.LASER_LENGTH,
             finger_x - 0.010,
@@ -1790,7 +2083,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
         UsdGeom.Imageable(laser).CreateVisibilityAttr().Set("invisible")
         box(
             stage,
-            FLANGE + "/Gripper/CameraConnector",
+            flange + "/Gripper/CameraConnector",
             (0.012, 0.010, 0.009),
             at_side(cam_ctr - 0.005, lat + cb[0] / 2 + 0.004),
             (0.95, 0.32, 0.04),
@@ -1800,7 +2093,7 @@ def attach_gripper(stage, jaw=None, articulated=True):
         across = np.cross(ax, side)
 
         def photo_line(name, points, width, material):
-            line = UsdGeom.BasisCurves.Define(stage, FLANGE + "/Gripper/" + name)
+            line = UsdGeom.BasisCurves.Define(stage, flange + "/Gripper/" + name)
             line.CreateTypeAttr("cubic")
             line.CreateBasisAttr("bspline")
             line.CreateWrapAttr("nonperiodic")
@@ -1868,8 +2161,9 @@ def attach_gripper(stage, jaw=None, articulated=True):
     for prim in stage.Traverse():
         path = str(prim.GetPath())
         if prim.HasAPI(UsdPhysics.CollisionAPI) and (
-            path.startswith(FLANGE + "/Gripper/")
-            or any(path.startswith(root + "/") for root in JAW_PRIMS.values())
+            path.startswith(flange + "/Gripper/")
+            or any(path.startswith(root + "/") for root in jaw_prims.values())
+            or any(path.startswith(root + "/") for root in extra_tool_roots)
         ):
             contact = PhysxSchema.PhysxCollisionAPI.Apply(prim)
             contact.CreateContactOffsetAttr().Set(0.0002)

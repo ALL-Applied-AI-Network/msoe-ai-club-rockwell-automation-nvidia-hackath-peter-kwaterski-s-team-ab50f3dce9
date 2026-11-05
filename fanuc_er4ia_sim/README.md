@@ -37,6 +37,7 @@ replaced by a silver material when the optional photo maps are absent.
 | `run_step_pipeline.sh` | Same as above, but `--stepwise` execution with live recovery |
 | `step_controller.py`, `live_step_recovery.py` | Incremental control state and in-session missed-grasp recovery |
 | `twin_stream_server.py` | Localhost HTTP status/frame adapter for `TkinterView.py --url` |
+| `demo_api.py` | Safe run control, telemetry, frame, and video API for the local React console |
 
 `recovery_policy.py` contains pure, host-testable failure classification and
 bounded cube-pick retry decisions. `run_with_recovery.sh RUN_DIR` can replay an

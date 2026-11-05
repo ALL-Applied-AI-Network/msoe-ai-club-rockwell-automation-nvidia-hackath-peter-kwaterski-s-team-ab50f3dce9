@@ -1,0 +1,9 @@
+{
+  "valid_components": 14,
+  "step_endpoint_configurations_reimported": 24,
+  "exact_interference_states_tested": 39,
+  "max_allowed_interference_mm3": 1e-06,
+  "pickup_pad_position_preserved": true,
+  "retraction_mm": 6,
+  "physical_mount_and_actuator_verified": false
+}

@@ -1,0 +1,10 @@
+{
+  "component_count": 13,
+  "all_components_valid": true,
+  "step_configurations_reimported": 12,
+  "max_endpoint_intersection_mm3": 0.0,
+  "additional_states_tested": 5,
+  "tool_options_per_state": 3,
+  "continuous_collision_proof": false,
+  "physical_fit_verified": false
+}

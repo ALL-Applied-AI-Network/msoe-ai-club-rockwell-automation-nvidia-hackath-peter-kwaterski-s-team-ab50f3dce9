@@ -1,0 +1,12 @@
+{
+  "units": "mm",
+  "valid_solids": true,
+  "assembly_solids": 6,
+  "interference_volume_mm3": 0,
+  "closed_pad_gap": 7.0,
+  "open_pad_gap": 19.0,
+  "closed_toe_gap": 6.6,
+  "open_toe_gap": 18.599999999999998,
+  "required_closed_mount_face_spacing": 8.2,
+  "mount_spacing_verified": false
+}
